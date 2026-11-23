@@ -151,8 +151,43 @@
         <button id="btnNew" class="ghost">새 글</button>
       </div>
 
+      <div class="reviewbox">
+        <div class="list-head">
+          <h3>3. 2차 검증 (ChatGPT)</h3>
+          <span id="reviewBadge" class="pill draft">검증 안 함</span>
+        </div>
+        <p class="small muted">다른 AI(ChatGPT)가 세율·한도·기한, '발행 전 확인할 내용', 광고 표현, 개인정보를 다시 확인합니다. 추가 비용은 없습니다.</p>
+        <ol class="steps small">
+          <li><button id="btnReviewCopy">검증 요청문 복사 → ChatGPT 열기</button></li>
+          <li>ChatGPT에 붙여넣어 보내기 <span class="muted">(웹 검색이 되는 상태면 더 정확합니다)</span></li>
+          <li>답변 아래 <b>복사</b> 버튼 → 아래 칸에 붙여넣고 <b>검증 결과 저장</b></li>
+        </ol>
+        <textarea id="reviewPaste" rows="4" placeholder="===검증 요약=== ..."></textarea>
+        <div class="actions">
+          <button id="btnReviewSave" class="primary">검증 결과 저장</button>
+          <button id="btnReviewToggle" class="ghost hidden">검증 결과 보기</button>
+        </div>
+        <p id="reviewStale" class="review-stale hidden">⚠ 검증 이후 본문이 수정되었습니다. 크게 고쳤다면 다시 검증해 주세요.</p>
+        <div id="reviewResult" class="preview review-result hidden"></div>
+
+        <div id="fixBox" class="fixbox hidden">
+          <h4>검증 결과 반영한 수정본 만들기</h4>
+          <ol class="steps small">
+            <li><button id="btnFixCopy">수정본 요청문 복사 → claude.ai 열기</button></li>
+            <li>claude.ai에 붙여넣어 보내기 → 답변 아래 <b>복사</b></li>
+            <li>아래 칸에 붙여넣고 <b>수정본 적용</b> (지금 본문이 수정본으로 바뀝니다)</li>
+          </ol>
+          <textarea id="fixPaste" rows="4" placeholder="===수정 내역=== ... ===본문=== ..."></textarea>
+          <div class="actions">
+            <button id="btnFixApply" class="primary">수정본 적용</button>
+            <button id="btnFixUndo" class="ghost hidden">수정 전으로 되돌리기</button>
+          </div>
+          <div id="fixChanges" class="fix-changes hidden"></div>
+        </div>
+      </div>
+
       <div class="imagebox">
-        <h3>3. 이미지 만들기</h3>
+        <h3>4. 이미지 만들기</h3>
 
         <div class="img-section">
           <div class="list-head"><h4>본문 이미지 (claude.ai · 도표형)</h4><span id="bodyImgCount" class="muted small"></span></div>
@@ -212,41 +247,6 @@
               </div>
             </div>
           </div>
-        </div>
-      </div>
-
-      <div class="reviewbox">
-        <div class="list-head">
-          <h3>4. 2차 검증 (ChatGPT)</h3>
-          <span id="reviewBadge" class="pill draft">검증 안 함</span>
-        </div>
-        <p class="small muted">다른 AI(ChatGPT)가 세율·한도·기한, '발행 전 확인할 내용', 광고 표현, 개인정보를 다시 확인합니다. 추가 비용은 없습니다.</p>
-        <ol class="steps small">
-          <li><button id="btnReviewCopy">검증 요청문 복사 → ChatGPT 열기</button></li>
-          <li>ChatGPT에 붙여넣어 보내기 <span class="muted">(웹 검색이 되는 상태면 더 정확합니다)</span></li>
-          <li>답변 아래 <b>복사</b> 버튼 → 아래 칸에 붙여넣고 <b>검증 결과 저장</b></li>
-        </ol>
-        <textarea id="reviewPaste" rows="4" placeholder="===검증 요약=== ..."></textarea>
-        <div class="actions">
-          <button id="btnReviewSave" class="primary">검증 결과 저장</button>
-          <button id="btnReviewToggle" class="ghost hidden">검증 결과 보기</button>
-        </div>
-        <p id="reviewStale" class="review-stale hidden">⚠ 검증 이후 본문이 수정되었습니다. 크게 고쳤다면 다시 검증해 주세요.</p>
-        <div id="reviewResult" class="preview review-result hidden"></div>
-
-        <div id="fixBox" class="fixbox hidden">
-          <h4>검증 결과 반영한 수정본 만들기</h4>
-          <ol class="steps small">
-            <li><button id="btnFixCopy">수정본 요청문 복사 → claude.ai 열기</button></li>
-            <li>claude.ai에 붙여넣어 보내기 → 답변 아래 <b>복사</b></li>
-            <li>아래 칸에 붙여넣고 <b>수정본 적용</b> (지금 본문이 수정본으로 바뀝니다)</li>
-          </ol>
-          <textarea id="fixPaste" rows="4" placeholder="===수정 내역=== ... ===본문=== ..."></textarea>
-          <div class="actions">
-            <button id="btnFixApply" class="primary">수정본 적용</button>
-            <button id="btnFixUndo" class="ghost hidden">수정 전으로 되돌리기</button>
-          </div>
-          <div id="fixChanges" class="fix-changes hidden"></div>
         </div>
       </div>
 
