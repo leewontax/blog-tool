@@ -1,0 +1,14 @@
+{
+  "name": "blog-tool",
+  "version": "1.0.0",
+  "description": "세무사용 네이버 블로그 글 작성 도우미",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.12.0"
+  }
+}
