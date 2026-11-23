@@ -195,9 +195,24 @@ function setMode(mode) {
   if (mode === "preview") $("preview").innerHTML = markdownToHtml($("content").value) || '<p class="muted">본문이 없습니다.</p>';
 }
 
+// ───────────── 자동 저장 ─────────────
+// 고친 뒤 20초 동안 더 고치지 않으면 자동 저장, 창을 닫거나 다른 창으로 갈 때도 저장
+const AUTOSAVE_MS = 20_000;
+let changeSeq = 0;
+let autosaveTimer = null;
+let saving = null;
+
 function markDirty() {
   dirty = true;
-  $("saveState").textContent = "저장 안 됨";
+  changeSeq++;
+  $("saveState").textContent = "저장 안 됨 · 잠시 후 자동 저장";
+  clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => save({ auto: true }), AUTOSAVE_MS);
+}
+
+function timeStr(iso) {
+  const d = new Date(iso);
+  return `${fmtDate(iso)} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 function readForm() {
@@ -234,27 +249,68 @@ function fillForm(p) {
   $("sources").classList.add("hidden");
   $("draftStatus").textContent = "";
   dirty = false;
-  $("saveState").textContent = currentId ? `저장됨 · ${fmtDate(p.updatedAt)}` : "";
+  clearTimeout(autosaveTimer);
+  $("saveState").textContent = currentId ? `저장됨 · ${timeStr(p.updatedAt)}` : "";
+  $("btnHistory").classList.toggle("hidden", !currentId);
   setMode("edit");
   updateCounter();
 }
 
-async function save() {
-  const data = readForm();
-  if (!data.title && !data.content.trim()) return toast("제목이나 본문을 입력해 주세요.");
-  if (data.status === "scheduled" && !data.scheduledAt) return toast("발행 예정이면 예정일을 넣어 주세요.");
-  if (data.status === "published" && !data.naverUrl) toast("발행 완료 글은 네이버 글 주소도 넣어 두면 나중에 찾기 쉽습니다.", 3000);
-  try {
-    const saved = currentId
-      ? await api(`/api/posts/${currentId}`, { method: "PUT", body: data })
-      : await api("/api/posts", { method: "POST", body: data });
-    currentId = saved.id;
-    dirty = false;
-    $("saveState").textContent = `저장됨 · ${fmtDate(saved.updatedAt)}`;
-    toast("저장했습니다.");
-  } catch (e) {
-    toast(e.message, 3500);
+async function save(opts = {}) {
+  const { auto = false, snapshotReason = "" } = opts;
+  clearTimeout(autosaveTimer);
+  if (saving) {
+    // 저장 중이면 끝난 뒤 한 번 더
+    await saving;
+    if (!dirty && !snapshotReason) return;
   }
+  const data = readForm();
+  if (!data.title && !data.content.trim()) {
+    if (!auto) toast("제목이나 본문을 입력해 주세요.");
+    return;
+  }
+  if (!auto) {
+    if (data.status === "scheduled" && !data.scheduledAt) return toast("발행 예정이면 예정일을 넣어 주세요.");
+    if (data.status === "published" && !data.naverUrl) toast("발행 완료 글은 네이버 글 주소도 넣어 두면 나중에 찾기 쉽습니다.", 3000);
+  }
+  if (snapshotReason) Object.assign(data, { forceSnapshot: true, snapshotReason });
+  const seqAtStart = changeSeq;
+  saving = (async () => {
+    try {
+      const saved = currentId
+        ? await api(`/api/posts/${currentId}`, { method: "PUT", body: data })
+        : await api("/api/posts", { method: "POST", body: data });
+      currentId = saved.id;
+      $("btnHistory").classList.remove("hidden");
+      dirty = changeSeq !== seqAtStart; // 저장하는 동안 또 고쳤으면 계속 '저장 안 됨'
+      $("saveState").textContent = dirty ? "저장 안 됨 · 잠시 후 자동 저장" : `${auto ? "자동 저장됨" : "저장됨"} · ${timeStr(saved.updatedAt)}`;
+      if (dirty) autosaveTimer = setTimeout(() => save({ auto: true }), AUTOSAVE_MS);
+      if (!auto) toast("저장했습니다.");
+    } catch (e) {
+      $("saveState").textContent = "⚠ 저장 실패 — 프로그램이 켜져 있는지 확인";
+      if (!auto) toast(e.message, 3500);
+    }
+  })();
+  try {
+    await saving;
+  } finally {
+    saving = null;
+  }
+}
+
+// 창을 닫을 때: 저장 요청을 보내 둠(keepalive)
+function flushOnLeave() {
+  if (!dirty) return;
+  const data = readForm();
+  if (!data.title && !data.content.trim()) return;
+  try {
+    fetch(currentId ? `/api/posts/${currentId}` : "/api/posts", {
+      method: currentId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      keepalive: true,
+    });
+  } catch {}
 }
 
 function confirmDiscard() {
@@ -473,7 +529,7 @@ $("btnFixApply").onclick = async () => {
   renderFixChanges(r.changes);
   $("btnFixUndo").classList.remove("hidden");
   markDirty();
-  await save();
+  await save({ snapshotReason: "수정본 적용 전" });
   const left = (body.match(/\[확인 필요\]/g) || []).length;
   toast(`수정본을 적용하고 저장했습니다.${left ? ` [확인 필요] ${left}곳이 남아 있습니다.` : ""} 수정 내역을 확인한 뒤, 가능하면 2차 검증을 한 번 더 해 주세요.`, 5500);
 };
@@ -488,7 +544,7 @@ $("btnFixUndo").onclick = async () => {
   $("btnFixUndo").classList.add("hidden");
   $("fixChanges").classList.add("hidden");
   markDirty();
-  await save();
+  await save({ snapshotReason: "되돌리기 전" });
   toast("수정 전 본문으로 되돌렸습니다.");
 };
 
@@ -1332,12 +1388,107 @@ $("holList").onclick = async (e) => {
   }
 };
 
+// ───────────── 이전 버전 ─────────────
+
+let historyItems = [];
+
+async function openHistory() {
+  if (!currentId) return;
+  if (dirty) await save({ auto: true });
+  try {
+    historyItems = await api(`/api/posts/${currentId}/history`);
+  } catch (e) {
+    return toast(e.message, 3500);
+  }
+  $("historyPreview").classList.add("hidden");
+  $("historyList").innerHTML = historyItems.length
+    ? historyItems
+        .map(
+          (h, i) => `<div class="hist"><div><b>${timeStr(h.savedAt)}</b> <span class="muted">${escapeHtml(h.reason || "")} · ${h.content.length.toLocaleString()}자</span><br>
+            <span class="muted">${escapeHtml((h.title || "(제목 없음)").slice(0, 40))} — ${escapeHtml(markdownToPlain(h.content).replace(/\s+/g, " ").slice(0, 60))}…</span></div>
+            <div class="hist-btns"><button class="ghost" data-hprev="${i}">미리보기</button><button data-hrestore="${i}">되돌리기</button></div></div>`
+        )
+        .join("")
+    : '<p class="muted">아직 보관된 이전 버전이 없습니다. 글을 고치며 저장하면 자동으로 쌓입니다.</p>';
+  $("historyDlg").showModal();
+}
+
+$("btnHistory").onclick = openHistory;
+$("btnHistoryClose").onclick = () => $("historyDlg").close();
+$("historyList").onclick = async (e) => {
+  const pv = e.target.closest("[data-hprev]");
+  if (pv) {
+    const h = historyItems[Number(pv.dataset.hprev)];
+    $("historyPreview").innerHTML = `<h2>${escapeHtml(h.title || "(제목 없음)")}</h2>` + markdownToHtml(h.content);
+    $("historyPreview").classList.remove("hidden");
+    return;
+  }
+  const rs = e.target.closest("[data-hrestore]");
+  if (rs) {
+    const h = historyItems[Number(rs.dataset.hrestore)];
+    if (!confirm(`${timeStr(h.savedAt)} 버전으로 되돌릴까요?\n지금 내용은 이전 버전 목록에 보관됩니다.`)) return;
+    $("title").value = h.title || "";
+    $("content").value = h.content || "";
+    setMode("edit");
+    updateCounter();
+    renderReview();
+    markDirty();
+    await save({ snapshotReason: "버전 되돌리기 전" });
+    $("historyDlg").close();
+    toast("이전 버전으로 되돌렸습니다.");
+  }
+};
+
+// ───────────── 자동 백업 설정 ─────────────
+
+let abInfo = null;
+
+async function loadAutoBackup() {
+  try {
+    abInfo = await api("/api/autobackup");
+  } catch {
+    return;
+  }
+  const st = abInfo.status || {};
+  const box = $("abStatus");
+  box.className = `ab-status small ${st.error ? "err" : ""}`;
+  box.innerHTML = [
+    st.lastAt ? `✅ 마지막 자동 백업: <b>${timeStr(st.lastAt)}</b>` : "아직 백업한 적이 없습니다.",
+    `위치: <code>${escapeHtml(abInfo.dir)}</code>`,
+    st.error ? `⚠ ${escapeHtml(st.error)}` : "",
+  ].filter(Boolean).join("<br>");
+  $("abDir").value = abInfo.dir === abInfo.defaultDir ? "" : abInfo.dir;
+  $("btnAbOneDrive").classList.toggle("hidden", !abInfo.oneDrive);
+}
+
+$("btnAbOneDrive").onclick = () => {
+  if (abInfo?.oneDrive) $("abDir").value = abInfo.oneDrive;
+};
+$("btnAbSave").onclick = async () => {
+  try {
+    await api("/api/autobackup/dir", { method: "PUT", body: { dir: $("abDir").value.trim() } });
+    toast("백업 위치를 저장하고 바로 백업했습니다.");
+  } catch (e) {
+    toast(e.message, 4500);
+  }
+  loadAutoBackup();
+};
+$("btnAbRun").onclick = async () => {
+  try {
+    await api("/api/autobackup/run", { method: "POST", body: {} });
+    toast("백업했습니다.");
+  } catch (e) {
+    toast(e.message, 4500);
+  }
+  loadAutoBackup();
+};
+
 // ───────────── 화면 전환·연결 ─────────────
 
 function showView(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
-  if (name === "list") loadPosts();
+  if (name === "list") { loadPosts(); loadAutoBackup(); }
   if (name === "samples") loadSamples();
   if (name === "calendar") loadCalendar();
 }
@@ -1391,7 +1542,10 @@ $("btnTplCancel").onclick = () => editTemplate(null);
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); }
 });
-window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); });
+window.addEventListener("pagehide", flushOnLeave);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && dirty) save({ auto: true });
+});
 
 // 시작
 (async () => {

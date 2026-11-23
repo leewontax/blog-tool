@@ -68,8 +68,8 @@ async function readStore(name, fallback) {
 }
 
 async function writeStore(name, value) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
   const file = path.join(DATA_DIR, `${name}.json`);
+  await fs.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), "utf8");
   await fs.rename(tmp, file); // 저장 도중 꺼져도 파일이 깨지지 않도록
@@ -357,7 +357,32 @@ function cleanPost(input, existing = {}) {
   };
 }
 
-async function handlePosts(req, res, id) {
+// ───────── 이전 버전 기록 ─────────
+// 자동 저장이 덮어쓰기 때문에, 저장 직전 내용을 보관합니다.
+// 10분에 한 번, 또는 내용이 크게 바뀌었을 때(300자 이상 차이, 수정본 적용·되돌리기 등)만 남깁니다.
+const HISTORY_KEEP = 30;
+
+async function snapshotPost(prev, next) {
+  const newContent = next.content ?? prev.content;
+  const newTitle = next.title ?? prev.title;
+  if (prev.content === newContent && prev.title === newTitle) return;
+  if (!String(prev.content || "").trim() && !String(prev.title || "").trim()) return;
+  const name = `history/${prev.id}`;
+  const list = await readStore(name, []);
+  const last = list[list.length - 1];
+  const minutes = last ? (Date.now() - new Date(last.savedAt).getTime()) / 60000 : Infinity;
+  const bigChange = Math.abs(String(newContent || "").length - String(prev.content || "").length) >= 300;
+  if (!next.forceSnapshot && minutes < 10 && !bigChange) return;
+  list.push({ savedAt: new Date().toISOString(), title: prev.title, content: prev.content, reason: next.snapshotReason || (bigChange ? "큰 수정 전" : "자동 기록") });
+  await writeStore(name, list.slice(-HISTORY_KEEP));
+}
+
+async function handlePosts(req, res, id, sub) {
+  if (sub === "history") {
+    if (req.method !== "GET") return sendJson(res, 405, { error: "지원하지 않는 요청" });
+    const list = await readStore(`history/${id}`, []);
+    return sendJson(res, 200, list.slice().reverse());
+  }
   const posts = await readStore("posts", []);
   if (req.method === "GET" && !id) {
     posts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
@@ -373,7 +398,9 @@ async function handlePosts(req, res, id) {
   if (idx < 0) return sendJson(res, 404, { error: "글을 찾을 수 없습니다." });
   if (req.method === "GET") return sendJson(res, 200, posts[idx]);
   if (req.method === "PUT") {
-    posts[idx] = cleanPost(await readBody(req), posts[idx]);
+    const body = await readBody(req);
+    await snapshotPost(posts[idx], body);
+    posts[idx] = cleanPost(body, posts[idx]);
     await writeStore("posts", posts);
     return sendJson(res, 200, posts[idx]);
   }
@@ -1107,6 +1134,102 @@ async function handleCalendar(req, res, sub, id) {
   sendJson(res, 405, { error: "지원하지 않는 요청" });
 }
 
+// ───────────────────────── 자동 백업 ─────────────────────────
+// 하루 한 번 data 폴더 전체를 날짜별 폴더로 복사합니다. 최근 30일치만 보관합니다.
+// 기본 위치: 프로그램 폴더의 backups. 설정에서 OneDrive 등 다른 폴더로 바꿀 수 있습니다.
+const DEFAULT_BACKUP_DIR = path.join(here, "backups");
+const BACKUP_KEEP_DAYS = 30;
+let backupRunning = null;
+
+async function backupDir() {
+  const settings = await readStore("settings", { region: "안성시" });
+  return settings.backupDir || DEFAULT_BACKUP_DIR;
+}
+
+function oneDriveSuggestion() {
+  const base = process.env.OneDrive || process.env.OneDriveConsumer || process.env.OneDriveCommercial;
+  return base ? path.join(base, "블로그도우미 백업") : null;
+}
+
+async function runBackup({ force = false } = {}) {
+  if (backupRunning) return backupRunning;
+  backupRunning = (async () => {
+    const dir = await backupDir();
+    const today = kstDate();
+    const target = path.join(dir, today);
+    const status = await readStore("backup-status", {});
+    if (!force && status.lastDate === today && status.dir === dir) return { skipped: true, ...status };
+    try {
+      await fs.access(DATA_DIR);
+    } catch {
+      return { skipped: true, reason: "아직 저장된 자료가 없습니다." };
+    }
+    await fs.mkdir(dir, { recursive: true });
+    // 같은 날 다시 백업하면 덮어씀
+    await fs.rm(target, { recursive: true, force: true });
+    await fs.cp(DATA_DIR, target, {
+      recursive: true,
+      filter: (src) => !src.endsWith(".tmp") && path.basename(src) !== "backup-status.json",
+    });
+    // 오래된 백업 정리 (날짜 이름 폴더만)
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    const dated = entries.filter((e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name)).map((e) => e.name).sort();
+    for (const old of dated.slice(0, Math.max(0, dated.length - BACKUP_KEEP_DAYS))) {
+      await fs.rm(path.join(dir, old), { recursive: true, force: true });
+    }
+    const result = { lastDate: today, lastAt: new Date().toISOString(), dir, kept: Math.min(dated.length, BACKUP_KEEP_DAYS), error: null };
+    await writeStore("backup-status", result);
+    return result;
+  })()
+    .catch(async (err) => {
+      const result = { ...(await readStore("backup-status", {})), error: `자동 백업 실패: ${err.message}`, errorAt: new Date().toISOString() };
+      await writeStore("backup-status", result).catch(() => {});
+      console.error("  ⚠ 자동 백업 실패:", err.message);
+      return result;
+    })
+    .finally(() => (backupRunning = null));
+  return backupRunning;
+}
+
+async function handleAutoBackup(req, res, action) {
+  if (req.method === "GET" && !action) {
+    return sendJson(res, 200, {
+      status: await readStore("backup-status", {}),
+      dir: await backupDir(),
+      defaultDir: DEFAULT_BACKUP_DIR,
+      oneDrive: oneDriveSuggestion(),
+      keepDays: BACKUP_KEEP_DAYS,
+    });
+  }
+  if (req.method === "POST" && action === "run") {
+    const r = await runBackup({ force: true });
+    return r.error ? sendJson(res, 500, { error: r.error }) : sendJson(res, 200, { status: r });
+  }
+  if (req.method === "PUT" && action === "dir") {
+    const b = await readBody(req);
+    const dir = String(b.dir || "").trim();
+    const settings = await readStore("settings", { region: "안성시" });
+    if (!dir) {
+      delete settings.backupDir; // 기본 위치로
+    } else {
+      if (!path.isAbsolute(dir)) return sendJson(res, 400, { error: "폴더 전체 경로를 입력해 주세요. 예: C:\\Users\\이름\\OneDrive\\블로그도우미 백업" });
+      try {
+        await fs.mkdir(dir, { recursive: true });
+        const probe = path.join(dir, ".write-test");
+        await fs.writeFile(probe, "ok");
+        await fs.rm(probe);
+      } catch (err) {
+        return sendJson(res, 400, { error: `이 폴더에 저장할 수 없습니다: ${err.message}` });
+      }
+      settings.backupDir = dir;
+    }
+    await writeStore("settings", settings);
+    const r = await runBackup({ force: true });
+    return r.error ? sendJson(res, 500, { error: r.error }) : sendJson(res, 200, { status: r, dir: await backupDir() });
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
 // ───────────────────────── 라우팅 ─────────────────────────
 
 async function serveStatic(req, res, pathname) {
@@ -1141,11 +1264,13 @@ const server = http.createServer(async (req, res) => {
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
     if (pathname === "/api/style") return await handleStyle(req, res);
-    const postMatch = pathname.match(/^\/api\/posts(?:\/([\w-]+))?$/);
-    if (postMatch) return await handlePosts(req, res, postMatch[1]);
+    const postMatch = pathname.match(/^\/api\/posts(?:\/([\w-]+)(?:\/(history))?)?$/);
+    if (postMatch) return await handlePosts(req, res, postMatch[1], postMatch[2]);
     const tplMatch = pathname.match(/^\/api\/templates(?:\/([\w-]+))?$/);
     if (tplMatch) return await handleTemplates(req, res, tplMatch[1]);
     if (pathname === "/api/backup") return await handleBackup(req, res);
+    const abMatch = pathname.match(/^\/api\/autobackup(?:\/(run|dir))?$/);
+    if (abMatch) return await handleAutoBackup(req, res, abMatch[1]);
     if (req.method === "GET") return await serveStatic(req, res, pathname);
     sendJson(res, 404, { error: "not found" });
   } catch (err) {
@@ -1156,7 +1281,25 @@ const server = http.createServer(async (req, res) => {
 });
 
 // 내 컴퓨터에서만 접속되도록 127.0.0.1 에만 연결
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`\n  블로그 글 작성 도우미 실행 중 → http://localhost:${PORT}\n`);
-  if (!hasKey) console.log("  ⚠ ANTHROPIC_API_KEY 가 없습니다. AI 기능 없이 글 보관·복사만 사용할 수 있습니다.\n");
+process.title = "블로그 글 도우미 - 이 창을 닫으면 프로그램이 꺼집니다";
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.log(`\n  이미 프로그램이 실행 중입니다 → http://localhost:${PORT}\n`);
+    process.exit(0);
+  }
+  throw err;
+});
+
+server.listen(PORT, "127.0.0.1", async () => {
+  console.log(`\n  블로그 글 작성 도우미 실행 중 → http://localhost:${PORT}`);
+  console.log("  (이 창을 닫으면 프로그램이 꺼집니다. 최소화해 두세요.)\n");
+  if (hasKey) console.log("  ⚠ ANTHROPIC_API_KEY 가 설정되어 있어 AI 기능 사용 시 API 요금이 나옵니다.\n");
+  // 시작할 때, 그리고 켜 둔 동안 1시간마다 오늘 백업이 있는지 확인
+  const check = async () => {
+    const r = await runBackup();
+    if (r && !r.skipped && !r.error) console.log(`  자동 백업 완료 → ${path.join(r.dir, r.lastDate)}`);
+  };
+  check();
+  setInterval(check, 60 * 60 * 1000).unref();
 });

@@ -97,7 +97,7 @@
     <section class="panel editor">
       <div class="editor-head">
         <h2>2. 다듬고 복사하기</h2>
-        <span id="saveState" class="muted"></span>
+        <span class="save-wrap"><span id="saveState" class="muted"></span> <button id="btnHistory" class="ghost small hidden" title="이전에 저장된 내용 보기">이전 버전</button></span>
       </div>
 
       <label>제목
@@ -263,8 +263,20 @@
       <p id="emptyList" class="muted hidden">저장된 글이 없습니다.</p>
 
       <div class="backup">
-        <h3>백업</h3>
-        <p class="muted small">글은 이 컴퓨터의 <code>data</code> 폴더에만 저장됩니다. 정기적으로 백업 파일을 내려받아 두세요.</p>
+        <h3>자동 백업</h3>
+        <p class="muted small">프로그램이 켜져 있으면 <b>하루 한 번</b> 저장한 글·설정 전체를 날짜별 폴더로 자동 백업합니다(최근 30일 보관). 컴퓨터 고장에 대비하려면 백업 위치를 <b>OneDrive 같은 클라우드 폴더</b>로 지정하세요.</p>
+        <div id="abStatus" class="ab-status small"></div>
+        <label class="small">백업 위치 (폴더 전체 경로)
+          <input id="abDir" placeholder="비워 두면 프로그램 폴더 안 backups 폴더" />
+        </label>
+        <div class="actions">
+          <button id="btnAbOneDrive" class="ghost small hidden">OneDrive 폴더 사용</button>
+          <button id="btnAbSave" class="primary small">위치 저장</button>
+          <button id="btnAbRun" class="ghost small">지금 백업</button>
+        </div>
+
+        <h3 style="margin-top:18px">백업 파일 (직접)</h3>
+        <p class="muted small">다른 컴퓨터로 옮기거나 따로 보관할 때 씁니다.</p>
         <a class="button ghost" href="/api/backup">백업 파일 내려받기</a>
         <label class="button ghost">백업에서 복원<input id="restoreFile" type="file" accept=".json" hidden /></label>
       </div>
@@ -332,6 +344,13 @@
       </div>
     </section>
   </main>
+
+  <dialog id="historyDlg" class="dlg">
+    <div class="dlg-head"><h3>이전 버전</h3><button id="btnHistoryClose" class="ghost small">닫기</button></div>
+    <p class="muted small">저장할 때 이전 내용을 보관합니다(10분에 한 번, 또는 크게 고칠 때 · 최근 30개). '미리보기'로 확인한 뒤 되돌릴 수 있습니다.</p>
+    <div id="historyList" class="history-list"></div>
+    <div id="historyPreview" class="preview history-preview hidden"></div>
+  </dialog>
 
   <div id="toast" class="toast"></div>
   <script src="app.js" type="module"></script>
