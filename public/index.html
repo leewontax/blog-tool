@@ -16,11 +16,26 @@
       <button class="tab" data-view="templates" role="tab">템플릿</button>
       <button class="tab" data-view="samples" role="tab">내 글 학습</button>
     </nav>
+    <button id="ticker" class="ticker" title="추천 주제 보기"><span class="ticker-label">추천</span><span id="tickerText" class="ticker-text">불러오는 중…</span></button>
     <div id="aiBadge" class="badge">확인 중…</div>
   </header>
 
   <!-- ───────── 글쓰기 ───────── -->
   <main id="view-write" class="view active">
+    <div class="left-col">
+    <section class="panel trends" id="trendsPanel">
+      <div class="trends-head">
+        <h2>추천 주제 TOP 5</h2>
+        <button id="btnTopicsRefresh" class="ghost small" title="새로 조사하기">새로 고침</button>
+      </div>
+      <div class="trends-meta">
+        <button id="regionBtn" class="region" title="지역 바꾸기">📍 <span id="regionName">안성시</span></button>
+        <span id="topicsTime" class="muted small"></span>
+      </div>
+      <ol id="topicList" class="topic-list"></ol>
+      <p id="topicsNote" class="muted small"></p>
+      <details id="topicSources" class="sources-detail hidden"><summary>조사에 쓴 자료</summary><div id="topicSourceList"></div></details>
+    </section>
     <section class="panel compose">
       <h2>1. 무엇을 쓸까요?</h2>
       <label>주제 <span class="req">필수</span>
@@ -57,6 +72,7 @@
       <div id="sources" class="sources hidden"></div>
       <p class="note">AI 초안은 반드시 직접 검토해 주세요. 확실하지 않은 부분은 본문에 <mark>[확인 필요]</mark>로 표시됩니다.</p>
     </section>
+    </div>
 
     <section class="panel editor">
       <div class="editor-head">

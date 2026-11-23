@@ -540,6 +540,236 @@ async function handleBackup(req, res) {
   sendJson(res, 405, { error: "지원하지 않는 요청" });
 }
 
+// ───────────────────────── 추천 주제 TOP 5 ─────────────────────────
+// 네이버 실시간 검색어는 2021년에 폐지되어 "지금 많이 검색되는 단어"를 직접 가져올 공식 방법이 없습니다.
+// 그래서 ① AI가 최신 지역 소식·세금 일정을 검색해 주제를 고르고
+//        ② (선택) 네이버 데이터랩으로 그 주제들의 실제 최근 검색 추세를 붙입니다.
+
+const TOPIC_REFRESH_HOURS = Number(process.env.TOPIC_REFRESH_HOURS) || 12;
+const NAVER_ID = process.env.NAVER_CLIENT_ID;
+const NAVER_SECRET = process.env.NAVER_CLIENT_SECRET;
+const DATALAB_URL = process.env.NAVER_DATALAB_URL || "https://openapi.naver.com/v1/datalab/search";
+const TOPIC_CATEGORIES = ["지역 이슈", "신고·납부 기한", "세법 개정", "부동산·토지", "생활 세금"];
+// 근거로 삼지 않을 사이트(블로그·카페)
+const NON_OFFICIAL_DOMAINS = ["blog.naver.com", "cafe.naver.com", "tistory.com", "brunch.co.kr", "blog.daum.net", "cafe.daum.net"];
+
+const TOPICS_SCHEMA = {
+  type: "object",
+  properties: {
+    topics: {
+      type: "array",
+      description: "추천 주제 정확히 5개, 1위부터 순서대로",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "블로그 글 주제 (40자 이내)" },
+          keywords: { type: "array", items: { type: "string" }, description: "사람들이 네이버에 실제로 검색할 만한 짧은 검색어 1~3개" },
+          category: { type: "string", enum: TOPIC_CATEGORIES },
+          reason: { type: "string", description: "지금 관심이 높을 것으로 보는 이유 한두 문장, 근거가 된 날짜·사건 포함" },
+          angle: { type: "string", description: "글을 어떤 방향으로 쓰면 좋을지 한두 문장" },
+          interest: { type: "integer", description: "예상 관심도 1~100 (AI 추정치)" },
+        },
+        required: ["title", "keywords", "category", "reason", "angle", "interest"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["topics"],
+  additionalProperties: false,
+};
+
+let topicJob = null; // 동시에 두 번 만들지 않도록
+
+function kstDate(d = new Date()) {
+  return new Date(d.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
+}
+
+async function researchTopics(region) {
+  const today = kstDate();
+  const messages = [
+    {
+      role: "user",
+      content: `오늘은 ${today}입니다. ${region}에서 세무사가 운영하는 네이버 블로그에 올릴 글감을 찾고 있습니다.
+웹검색으로 다음을 조사해 메모로 정리해 주세요.
+
+1. 오늘부터 약 6주 안에 있는 세금 신고·납부 기한 (국세청 신고 일정, 지방세 납부 일정). 날짜를 정확히 적고, 기한이 휴일이면 연장 여부도 적어 주세요.
+2. ${region} 지역 소식 중 주민·사업자의 세금 문제와 연결될 만한 것 (개발사업·토지 보상·산업단지·부동산 거래·농지·지역 상권·지자체 지원금 등). 최근 3개월 이내 뉴스나 ${region}청 발표 위주로 찾아 주세요.
+3. 최근 시행됐거나 곧 시행되는 세법 개정 중 개인·소상공인·농업인에게 영향이 큰 것.
+4. 이 시기에 사람들이 네이버에서 많이 찾아볼 만한 세금 질문.
+
+각 항목마다 날짜와 출처 URL을 적어 주세요. 블로그·카페 글은 근거로 쓰지 마세요. 확인되지 않은 내용은 "확인 필요"라고 적어 주세요.`,
+    },
+  ];
+  const tools = [{ type: "web_search_20260209", name: "web_search", max_uses: 8, blocked_domains: NON_OFFICIAL_DOMAINS, user_location: { type: "approximate", country: "KR", region: "Gyeonggi-do", timezone: "Asia/Seoul" } }];
+  const sources = [];
+  let notes = "";
+  for (let turn = 0; turn < 4; turn++) {
+    const msg = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 16000,
+      output_config: { effort: "medium" },
+      betas: [FALLBACK_BETA],
+      fallbacks: "default",
+      tools,
+      messages,
+    });
+    const refused = refusalMessage(msg);
+    if (refused) throw new Error(refused);
+    notes += textOf(msg);
+    for (const block of msg.content) {
+      if (block.type === "text" && Array.isArray(block.citations)) {
+        for (const c of block.citations) {
+          if (c.url && !sources.some((s) => s.url === c.url)) sources.push({ url: c.url, title: c.title || c.url });
+        }
+      }
+    }
+    if (msg.stop_reason !== "pause_turn") break;
+    messages.push({ role: "assistant", content: msg.content });
+  }
+  return { notes, sources };
+}
+
+async function pickTopics(region, notes, previous) {
+  const msg = await client.beta.messages.create({
+    model: MODEL,
+    max_tokens: 6000,
+    output_config: { effort: "medium", format: { type: "json_schema", schema: TOPICS_SCHEMA } },
+    betas: [FALLBACK_BETA],
+    fallbacks: "default",
+    system:
+      "당신은 세무사 블로그의 편집장입니다. 조사 메모만 근거로 삼아, 지금 글을 쓰면 방문자가 가장 많이 올 것 같은 주제 5개를 고릅니다. 메모에 없는 날짜·수치는 만들지 않습니다. 과장·낚시성 제목은 피합니다.",
+    messages: [
+      {
+        role: "user",
+        content: `지역: ${region}\n오늘: ${kstDate()}\n\n선정 기준:
+- 마감이 임박한 신고·납부 기한은 검색이 몰리므로 우선
+- ${region} 지역 소식과 연결된 주제를 최소 2개 포함
+- 5개의 분류가 한쪽으로 몰리지 않게
+- 너무 넓은 주제(예: "절세 방법")보다 구체적인 주제
+${previous.length ? `- 직전 목록: ${previous.join(" / ")} (여전히 유효하면 유지해도 됨)\n` : ""}
+<조사_메모>\n${notes.slice(0, 30000)}\n</조사_메모>`,
+      },
+    ],
+  });
+  const refused = refusalMessage(msg);
+  if (refused) throw new Error(refused);
+  const { topics } = JSON.parse(textOf(msg));
+  return topics.slice(0, 5).map((t, i) => ({
+    rank: i + 1,
+    title: t.title,
+    keywords: t.keywords.map((k) => k.trim()).filter(Boolean).slice(0, 3),
+    category: t.category,
+    reason: t.reason,
+    angle: t.angle,
+    interest: Math.max(1, Math.min(100, Math.round(t.interest))),
+  }));
+}
+
+// 네이버 데이터랩: 최근 4주 일별 검색 추이 (5개 주제끼리 비교한 상대값, 전국 기준)
+async function attachTrends(topics) {
+  if (!NAVER_ID || !NAVER_SECRET) return null;
+  const end = new Date(Date.now() - 86400_000);
+  const start = new Date(end.getTime() - 27 * 86400_000);
+  try {
+    const res = await fetch(DATALAB_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Naver-Client-Id": NAVER_ID, "X-Naver-Client-Secret": NAVER_SECRET },
+      body: JSON.stringify({
+        startDate: kstDate(start),
+        endDate: kstDate(end),
+        timeUnit: "date",
+        keywordGroups: topics.map((t) => ({ groupName: `${t.rank}. ${t.title}`.slice(0, 100), keywords: t.keywords.length ? t.keywords : [t.title] })),
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return `네이버 데이터랩 연결 실패(${res.status}): ${data.errorMessage || data.message || "키나 사용 설정을 확인해 주세요"}`;
+    for (const [i, r] of (data.results || []).entries()) {
+      const series = (r.data || []).map((d) => d.ratio);
+      if (!topics[i] || !series.length) continue;
+      const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+      const last7 = avg(series.slice(-7));
+      const prev7 = avg(series.slice(-14, -7));
+      topics[i].trend = {
+        series: series.map((v) => Math.round(v * 10) / 10),
+        level: Math.round(last7 * 10) / 10,
+        change: prev7 > 0 ? Math.round(((last7 - prev7) / prev7) * 100) : null,
+      };
+    }
+    return null;
+  } catch (err) {
+    return `네이버 데이터랩 연결 실패: ${err.message}`;
+  }
+}
+
+async function generateTopics() {
+  const settings = await readStore("settings", { region: "안성시" });
+  const old = await readStore("topics", null);
+  const { notes, sources } = await researchTopics(settings.region);
+  const topics = await pickTopics(settings.region, notes, old?.topics?.map((t) => t.title) || []);
+  // 순위 변동 표시용: 직전 목록에서 같은 대표 검색어가 몇 위였는지
+  for (const t of topics) {
+    const before = old?.topics?.find((o) => o.keywords?.[0] && o.keywords[0] === t.keywords[0]);
+    t.prevRank = before ? before.rank : null;
+  }
+  const trendError = await attachTrends(topics);
+  const doc = { region: settings.region, generatedAt: new Date().toISOString(), topics, sources: sources.slice(0, 15), trendError };
+  await writeStore("topics", doc);
+  return doc;
+}
+
+function startTopicJob() {
+  if (!topicJob) {
+    topicJob = generateTopics()
+      .then((doc) => ({ ok: true, doc }))
+      .catch((err) => {
+        console.error(err);
+        return { ok: false, error: apiErrorMessage(err) };
+      })
+      .finally(() => setTimeout(() => (topicJob = null), 0));
+  }
+  return topicJob;
+}
+
+let lastTopicError = null;
+
+async function handleTopics(req, res, action) {
+  const settings = await readStore("settings", { region: "안성시" });
+  if (req.method === "GET" && !action) {
+    const doc = await readStore("topics", null);
+    const ageHours = doc ? (Date.now() - new Date(doc.generatedAt).getTime()) / 3600_000 : Infinity;
+    const stale = !doc || ageHours >= TOPIC_REFRESH_HOURS || doc.region !== settings.region;
+    // 오래됐으면 화면을 연 김에 뒤에서 새로 만들기 (실패한 직후에는 자동으로 다시 시도하지 않음)
+    if (stale && client && !topicJob && !(lastTopicError && Date.now() - lastTopicError.at < 30 * 60_000)) {
+      startTopicJob().then((r) => (lastTopicError = r.ok ? null : { at: Date.now(), message: r.error }));
+    }
+    return sendJson(res, 200, {
+      doc,
+      region: settings.region,
+      refreshing: Boolean(topicJob),
+      refreshHours: TOPIC_REFRESH_HOURS,
+      datalab: Boolean(NAVER_ID && NAVER_SECRET),
+      aiReady: Boolean(client),
+      error: lastTopicError?.message || null,
+    });
+  }
+  if (req.method === "POST" && action === "refresh") {
+    if (!client) return sendJson(res, 503, { error: "AI 키가 설정되지 않았습니다." });
+    const r = await startTopicJob();
+    lastTopicError = r.ok ? null : { at: Date.now(), message: r.error };
+    return r.ok ? sendJson(res, 200, { doc: r.doc }) : sendJson(res, 502, { error: r.error });
+  }
+  if (req.method === "PUT" && action === "region") {
+    const b = await readBody(req);
+    const region = String(b.region || "").trim().slice(0, 30);
+    if (!region) return sendJson(res, 400, { error: "지역 이름을 입력해 주세요." });
+    await writeStore("settings", { ...settings, region });
+    lastTopicError = null;
+    return sendJson(res, 200, { region });
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
 // ───────────────────────── 라우팅 ─────────────────────────
 
 async function serveStatic(req, res, pathname) {
@@ -565,6 +795,8 @@ const server = http.createServer(async (req, res) => {
       if (!client) return sendJson(res, 503, { error: "AI 키가 설정되지 않았습니다. README의 '처음 한 번 설정'을 따라 .env 파일에 ANTHROPIC_API_KEY를 넣어 주세요." });
       return await aiRoutes[pathname](req, res);
     }
+    const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region))?$/);
+    if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
     if (pathname === "/api/style") return await handleStyle(req, res);

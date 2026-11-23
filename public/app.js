@@ -618,6 +618,173 @@ $("sampleList").onchange = async (e) => {
   await loadSamples();
 };
 
+// ───────────── 추천 주제 TOP 5 ─────────────
+
+let topicsDoc = null;
+let topicsRenderedAt = null;
+let tickerIdx = 0;
+let topicsPoll = null;
+
+function timeAgo(iso) {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "방금";
+  if (min < 60) return `${min}분 전`;
+  const h = Math.floor(min / 60);
+  return h < 24 ? `${h}시간 전` : `${Math.floor(h / 24)}일 전`;
+}
+
+function sparkline(series) {
+  const w = 100, h = 26;
+  const max = Math.max(...series, 1);
+  const pts = series.map((v, i) => `${((i / Math.max(series.length - 1, 1)) * w).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(" ");
+  return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}"/></svg>`;
+}
+
+function moveBadge(t, hasHistory) {
+  if (!hasHistory) return "";
+  if (t.prevRank == null) return '<span class="move new">NEW</span>';
+  const d = t.prevRank - t.rank;
+  if (d > 0) return `<span class="move up">▲${d}</span>`;
+  if (d < 0) return `<span class="move down">▼${-d}</span>`;
+  return '<span class="move">–</span>';
+}
+
+function renderTopics(state) {
+  const list = $("topicList");
+  const doc = state.doc;
+  $("regionName").textContent = state.region;
+  $("btnTopicsRefresh").disabled = state.refreshing || !state.aiReady;
+  $("btnTopicsRefresh").textContent = state.refreshing ? "조사 중…" : "새로 고침";
+
+  if (!doc) {
+    list.innerHTML = state.refreshing || state.aiReady
+      ? '<li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li><li class="skeleton"></li>'
+      : "";
+    $("topicsTime").textContent = "";
+    $("topicsNote").textContent = !state.aiReady
+      ? "AI 키를 넣으면 추천 주제가 표시됩니다."
+      : state.error || "최신 소식과 세금 일정을 조사하고 있습니다. 1~3분 걸립니다.";
+    $("tickerText").textContent = state.aiReady ? "추천 주제 조사 중…" : "AI 키가 필요합니다";
+    $("topicSources").classList.add("hidden");
+    return;
+  }
+
+  const hasHistory = doc.topics.some((t) => t.prevRank != null);
+  const changed = topicsRenderedAt && topicsRenderedAt !== doc.generatedAt;
+  topicsRenderedAt = doc.generatedAt;
+  list.innerHTML = doc.topics
+    .map((t, i) => {
+      const meter = t.trend
+        ? `${sparkline(t.trend.series)}<span>지수 ${t.trend.level}${t.trend.change != null ? ` <b class="chg ${t.trend.change >= 0 ? "up" : "down"}">${t.trend.change >= 0 ? "▲" : "▼"}${Math.abs(t.trend.change)}%</b>` : ""}</span>`
+        : `<div class="bar"><i style="width:${t.interest}%"></i></div><span>예상 ${t.interest}</span>`;
+      return `<li class="topic ${changed ? "flash" : ""}">
+        <div class="rank">${t.rank}${moveBadge(t, hasHistory)}</div>
+        <div class="topic-body">
+          <div class="topic-title"><span class="topic-cat">${escapeHtml(t.category)}</span>${escapeHtml(t.title)}</div>
+          <div class="topic-reason">${escapeHtml(t.reason)}</div>
+          <div class="meter" title="${t.trend ? "네이버 데이터랩 최근 4주 검색 추이 (5개 주제끼리 비교한 상대값, 전국 기준). 변화율은 최근 7일과 그 전 7일 비교" : "AI가 추정한 예상 관심도입니다. 실제 검색량이 아닙니다."}">${meter}</div>
+          <div class="topic-actions"><button data-topic="${i}">이 주제로 쓰기</button></div>
+        </div>
+      </li>`;
+    })
+    .join("");
+
+  const notes = [];
+  notes.push(doc.topics.some((t) => t.trend) ? "그래프: 네이버 데이터랩 최근 4주 검색 추이(전국, 상대값)" : "막대: AI 추정 관심도(실제 검색량 아님)");
+  if (doc.trendError) notes.push(doc.trendError);
+  else if (!state.datalab) notes.push("네이버 데이터랩 키를 넣으면 실제 검색 추이로 표시됩니다");
+  if (state.error) notes.push(`최근 갱신 실패: ${state.error}`);
+  notes.push("날짜·기한은 글 쓰기 전 꼭 확인하세요");
+  $("topicsNote").textContent = notes.join(" · ");
+  $("topicsTime").textContent = `${timeAgo(doc.generatedAt)} 갱신${state.refreshing ? " · 새로 조사 중…" : ""}`;
+
+  if (doc.sources?.length) {
+    $("topicSourceList").innerHTML = doc.sources.map((s) => `<a href="${escapeHtml(s.url)}" target="_blank" rel="noopener">${escapeHtml(s.title)}</a>`).join("");
+    $("topicSources").classList.remove("hidden");
+  } else $("topicSources").classList.add("hidden");
+  showTicker(false);
+}
+
+function showTicker(advance = true) {
+  const topics = topicsDoc?.doc?.topics;
+  if (!topics?.length) return;
+  if (advance) tickerIdx = (tickerIdx + 1) % topics.length;
+  const t = topics[tickerIdx % topics.length];
+  const el = $("tickerText");
+  el.classList.remove("roll");
+  void el.offsetWidth; // 애니메이션 다시 시작
+  el.textContent = `${t.rank}. ${t.title}`;
+  el.classList.add("roll");
+}
+
+async function loadTopics() {
+  try {
+    topicsDoc = await api("/api/topics");
+    renderTopics(topicsDoc);
+  } catch (e) {
+    $("topicsNote").textContent = e.message;
+  }
+  // 조사 중이면 20초마다, 아니면 10분마다 확인
+  clearTimeout(topicsPoll);
+  topicsPoll = setTimeout(loadTopics, topicsDoc?.refreshing ? 20_000 : 600_000);
+}
+
+async function refreshTopics() {
+  if (!confirm("최신 소식을 새로 조사합니다. 1~3분 걸리고 AI 요금이 조금 나옵니다. 진행할까요?")) return;
+  topicsDoc = { ...(topicsDoc || {}), refreshing: true };
+  renderTopics(topicsDoc);
+  try {
+    await api("/api/topics/refresh", { method: "POST", body: {} });
+    toast("추천 주제를 새로 만들었습니다.");
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+  loadTopics();
+}
+
+async function changeRegion() {
+  const region = prompt("추천 주제를 찾을 지역을 입력해 주세요. (예: 안성시, 평택시)", topicsDoc?.region || "안성시");
+  if (!region || !region.trim() || region.trim() === topicsDoc?.region) return;
+  try {
+    await api("/api/topics/region", { method: "PUT", body: { region: region.trim() } });
+    toast(`${region.trim()} 기준으로 새로 조사합니다.`);
+    loadTopics();
+  } catch (e) {
+    toast(e.message, 3500);
+  }
+}
+
+function useTopic(i) {
+  const t = topicsDoc?.doc?.topics?.[i];
+  if (!t) return;
+  if ($("topic").value.trim() && $("topic").value.trim() !== t.title && !confirm("작성 중인 주제와 메모를 이 추천 주제로 바꿀까요?")) return;
+  $("topic").value = t.title;
+  $("memo").value = `글 방향: ${t.angle}\n추천 이유: ${t.reason}\n검색어: ${t.keywords.join(", ")}`;
+  $("topic").scrollIntoView({ behavior: "smooth", block: "center" });
+  $("topic").focus();
+  toast("주제와 메모를 채웠습니다. 확인 후 'AI 초안 작성'을 눌러 주세요.", 3000);
+}
+
+$("topicList").onclick = (e) => {
+  const b = e.target.closest("[data-topic]");
+  if (b) useTopic(Number(b.dataset.topic));
+};
+$("btnTopicsRefresh").onclick = refreshTopics;
+$("regionBtn").onclick = changeRegion;
+$("ticker").onclick = () => {
+  showView("write");
+  const topics = topicsDoc?.doc?.topics;
+  $("trendsPanel").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (topics?.length) {
+    const li = $("topicList").children[tickerIdx % topics.length];
+    li?.classList.remove("flash");
+    void li?.offsetWidth;
+    li?.classList.add("flash");
+  }
+};
+setInterval(() => showTicker(true), 3500);
+setInterval(() => topicsDoc?.doc && ($("topicsTime").textContent = `${timeAgo(topicsDoc.doc.generatedAt)} 갱신${topicsDoc.refreshing ? " · 새로 조사 중…" : ""}`), 60_000);
+
 // ───────────── 화면 전환·연결 ─────────────
 
 function showView(name) {
@@ -689,4 +856,5 @@ window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); 
   await loadTemplates();
   await loadSamples();
   fillForm(null);
+  loadTopics();
 })();
