@@ -191,3 +191,13 @@ table.posts td.title { cursor: pointer; font-weight: 600; }
 .sources-detail a { color: var(--accent); display: block; word-break: break-all; margin: 2px 0; }
 .skeleton { height: 14px; border-radius: 4px; background: var(--line); margin: 12px 0; animation: pulse 1.2s infinite alternate; }
 @keyframes pulse { to { opacity: .4; } }
+
+/* 요청문 복사 방식 */
+body:not(.mode-copy) .copy-only { display: none !important; }
+body.mode-copy .api-only { display: none !important; }
+.head-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.copy-steps { margin-top: 12px; padding: 12px; border-radius: 8px; background: var(--accent-soft); }
+.copy-steps p { margin: 0 0 10px; }
+.copy-steps textarea { background: var(--panel); }
+.paste-box { margin: 6px 0 12px; }
+.paste-box textarea { margin-bottom: 8px; font-size: 13px; }

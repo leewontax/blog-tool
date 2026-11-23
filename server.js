@@ -702,20 +702,25 @@ async function attachTrends(topics) {
   }
 }
 
+async function saveTopicsDoc(region, topics, sources) {
+  const old = await readStore("topics", null);
+  // 순위 변동 표시용: 직전 목록에서 같은 대표 검색어(또는 같은 제목)가 몇 위였는지
+  for (const t of topics) {
+    const before = old?.topics?.find((o) => (o.keywords?.[0] && o.keywords[0] === t.keywords[0]) || o.title === t.title);
+    t.prevRank = before ? before.rank : null;
+  }
+  const trendError = await attachTrends(topics);
+  const doc = { region, generatedAt: new Date().toISOString(), topics, sources: sources.slice(0, 15), trendError };
+  await writeStore("topics", doc);
+  return doc;
+}
+
 async function generateTopics() {
   const settings = await readStore("settings", { region: "안성시" });
   const old = await readStore("topics", null);
   const { notes, sources } = await researchTopics(settings.region);
   const topics = await pickTopics(settings.region, notes, old?.topics?.map((t) => t.title) || []);
-  // 순위 변동 표시용: 직전 목록에서 같은 대표 검색어가 몇 위였는지
-  for (const t of topics) {
-    const before = old?.topics?.find((o) => o.keywords?.[0] && o.keywords[0] === t.keywords[0]);
-    t.prevRank = before ? before.rank : null;
-  }
-  const trendError = await attachTrends(topics);
-  const doc = { region: settings.region, generatedAt: new Date().toISOString(), topics, sources: sources.slice(0, 15), trendError };
-  await writeStore("topics", doc);
-  return doc;
+  return saveTopicsDoc(settings.region, topics, sources);
 }
 
 function startTopicJob() {
@@ -759,6 +764,12 @@ async function handleTopics(req, res, action) {
     lastTopicError = r.ok ? null : { at: Date.now(), message: r.error };
     return r.ok ? sendJson(res, 200, { doc: r.doc }) : sendJson(res, 502, { error: r.error });
   }
+  if (req.method === "POST" && action === "import") {
+    const b = await readBody(req);
+    const doc = await importTopics(String(b.text || ""));
+    lastTopicError = null;
+    return sendJson(res, 200, { doc });
+  }
   if (req.method === "PUT" && action === "region") {
     const b = await readBody(req);
     const region = String(b.region || "").trim().slice(0, 30);
@@ -768,6 +779,171 @@ async function handleTopics(req, res, action) {
     return sendJson(res, 200, { region });
   }
   sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
+// ───────────────────────── 요청문 복사 방식 (추가 비용 없음) ─────────────────────────
+// API를 쓰지 않고, 요청문을 만들어 claude.ai(구독 요금에 포함)에 붙여넣게 합니다.
+
+const OFFICIAL_SITES_TEXT = "국가법령정보센터(law.go.kr), 국세청(nts.go.kr), 국세법령정보시스템(taxlaw.nts.go.kr), 기획재정부(moef.go.kr)";
+
+async function buildDraftRequest(body) {
+  const parts = [SYSTEM_PROMPT.replace("- 제목은 쓰지 말고 본문만 씁니다.\n", "")];
+  if (body.useStyle) {
+    const style = await styleSystemBlock();
+    if (style) parts.push(style.text);
+  }
+  parts.push("──────── 이번 글 ────────", draftPrompt(body));
+  if (body.webSearch) {
+    parts.push(
+      `웹 검색을 사용할 수 있다면 ${OFFICIAL_SITES_TEXT} 등 공식 자료로 세율·금액·기한·조문을 확인한 뒤 쓰고, 본문 맨 끝에 "참고 자료:" 아래로 출처 링크를 적어 주세요. 블로그·카페 글은 근거로 쓰지 마세요.`
+    );
+  }
+  parts.push(`아래 형식 그대로 답해 주세요. 구분선(=== ===)은 지우지 말고, 형식 밖의 설명은 쓰지 마세요.
+
+===제목 후보===
+1. (네이버 검색에 잘 걸리는 제목, 40자 이내, 핵심 검색어를 앞쪽에)
+2.
+3.
+4.
+5.
+===본문===
+(본문. 제목은 넣지 마세요.)
+===해시태그===
+(해시태그 10개, # 없이 쉼표로 구분, 띄어쓰기 없이)`);
+  return parts.join("\n\n");
+}
+
+async function buildMetaRequest(body) {
+  const style = body.useStyle ? (await readStore("style", { profile: "" })).profile.trim() : "";
+  return `네이버 블로그 글의 제목과 해시태그를 추천해 주세요. 과장·낚시성 표현, '무조건/100%' 같은 단정 표현은 피하고, 사람들이 실제로 검색할 말(예: 종합소득세 신고기간, 연말정산 의료비공제)을 자연스럽게 넣어 주세요.
+${style ? `\n블로그 주인의 말투 요약(제목 스타일도 이에 맞춰 주세요):\n${style.slice(0, 3000)}\n` : ""}
+주제: ${body.topic || "(본문 참고)"}
+
+본문:
+${String(body.content || "").slice(0, 12000)}
+
+아래 형식 그대로 답해 주세요.
+
+===제목 후보===
+1.
+2.
+3.
+4.
+5.
+===해시태그===
+(해시태그 10개, # 없이 쉼표로 구분, 띄어쓰기 없이)`;
+}
+
+async function buildStyleRequest() {
+  const samples = await activeSamples();
+  if (!samples.length) return null;
+  return `아래 블로그 글들을 쓴 사람과 똑같은 말투로 새 글을 쓰려는 작가에게 줄 '말투 지침'을 작성해 주세요.
+세법 내용이나 수치는 분석하지 말고, 말투와 형식만 분석해 주세요.
+
+${samples.map((s, i) => `<글 번호="${i + 1}">\n${s.content}\n</글>`).join("\n\n")}
+
+다음 항목별로 짧은 글머리표로, 실제 글에서 가져온 짧은 표현 예시를 따옴표로 곁들여 주세요.
+1. 말투·어미 (예: ~습니다/~해요, 독자를 부르는 호칭)
+2. 시작 인사와 맺음말
+3. 글 구성 순서
+4. 소제목 스타일
+5. 문단 길이·줄바꿈 습관
+6. 강조·목록·표·이모지·기호 사용
+7. 자주 쓰는 표현
+8. 피하는 표현이나 특징
+글 수가 적어 판단하기 어려운 항목은 "판단 어려움"이라고 적어 주세요. 전체 1,500자 이내로, 지침 내용만 답해 주세요. 고객 이름 등 개인정보는 옮겨 적지 마세요.`;
+}
+
+async function buildTopicsRequest() {
+  const { region } = await readStore("settings", { region: "안성시" });
+  const old = await readStore("topics", null);
+  const today = kstDate();
+  return `오늘은 ${today}입니다. 저는 ${region}에서 일하는 세무사이고, 네이버 블로그에 올릴 글감을 찾고 있습니다.
+웹 검색으로 아래를 조사한 뒤, 지금 글을 쓰면 방문자가 가장 많이 올 것 같은 주제 5개를 골라 주세요.
+
+[조사할 것]
+1. 오늘부터 약 6주 안에 있는 세금 신고·납부 기한 (국세청 신고 일정, 지방세 납부 일정). 기한이 휴일이면 연장 여부도 확인.
+2. ${region} 지역 소식 중 주민·사업자의 세금 문제와 연결될 만한 것 (개발사업·토지 보상·산업단지·부동산 거래·농지·지역 상권·지자체 지원금 등). 최근 3개월 이내 뉴스나 ${region}청 발표 위주.
+3. 최근 시행됐거나 곧 시행되는 세법 개정 중 개인·소상공인·농업인에게 영향이 큰 것.
+4. 이 시기에 사람들이 네이버에서 많이 찾아볼 만한 세금 질문.
+
+[고르는 기준]
+- 마감이 임박한 신고·납부 기한은 검색이 몰리므로 우선
+- ${region} 지역 소식과 연결된 주제를 최소 2개 포함
+- 5개의 분류가 한쪽으로 몰리지 않게, 너무 넓은 주제(예: "절세 방법")보다 구체적인 주제
+- 블로그·카페 글은 근거로 쓰지 말고, 확인되지 않은 날짜·수치는 만들지 말 것
+${old?.topics?.length ? `- 직전 목록: ${old.topics.map((t) => t.title).join(" / ")} (여전히 유효하면 유지해도 됨)\n` : ""}
+[답변 형식]
+아래 JSON만 코드 블록 하나로 답해 주세요. 다른 설명은 쓰지 마세요.
+category는 ${TOPIC_CATEGORIES.map((c) => `"${c}"`).join(", ")} 중 하나, interest는 예상 관심도 1~100입니다.
+
+\`\`\`json
+{
+  "topics": [
+    {
+      "title": "블로그 글 주제 (40자 이내)",
+      "keywords": ["사람들이 네이버에 검색할 짧은 검색어 1~3개"],
+      "category": "신고·납부 기한",
+      "reason": "지금 관심이 높을 것으로 보는 이유 한두 문장 (근거가 된 날짜·사건 포함)",
+      "angle": "글을 어떤 방향으로 쓰면 좋을지 한두 문장",
+      "interest": 80
+    }
+  ],
+  "sources": [{ "title": "자료 제목", "url": "https://..." }]
+}
+\`\`\``;
+}
+
+// claude.ai 답변(JSON)을 추천 주제로 저장
+async function importTopics(text) {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) throw Object.assign(new Error("답변에서 JSON을 찾지 못했습니다. claude.ai 답변의 코드 블록을 그대로 복사해 주세요."), { status: 400 });
+  let parsed;
+  try {
+    parsed = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    throw Object.assign(new Error("답변 형식이 올바르지 않습니다. 코드 블록 오른쪽 위 복사 버튼으로 복사해 주세요."), { status: 400 });
+  }
+  const list = Array.isArray(parsed.topics) ? parsed.topics : [];
+  const topics = list
+    .filter((t) => t && typeof t.title === "string" && t.title.trim())
+    .slice(0, 5)
+    .map((t, i) => ({
+      rank: i + 1,
+      title: t.title.trim().slice(0, 80),
+      keywords: (Array.isArray(t.keywords) ? t.keywords : []).map((k) => String(k).trim()).filter(Boolean).slice(0, 3),
+      category: TOPIC_CATEGORIES.includes(t.category) ? t.category : "생활 세금",
+      reason: String(t.reason || "").slice(0, 400),
+      angle: String(t.angle || "").slice(0, 400),
+      interest: Math.max(1, Math.min(100, Math.round(Number(t.interest) || 50))),
+    }));
+  if (!topics.length) throw Object.assign(new Error("답변에 주제가 없습니다."), { status: 400 });
+  for (const t of topics) if (!t.keywords.length) t.keywords = [t.title];
+  const sources = (Array.isArray(parsed.sources) ? parsed.sources : [])
+    .filter((s) => s && /^https?:\/\//.test(s.url || ""))
+    .slice(0, 15)
+    .map((s) => ({ url: String(s.url), title: String(s.title || s.url).slice(0, 200) }));
+  const { region } = await readStore("settings", { region: "안성시" });
+  return saveTopicsDoc(region, topics, sources);
+}
+
+async function handlePromptRequest(req, res, kind) {
+  const body = req.method === "POST" ? await readBody(req) : {};
+  let text = null;
+  if (kind === "draft") {
+    if (!String(body.topic || "").trim()) return sendJson(res, 400, { error: "주제를 입력해 주세요." });
+    text = await buildDraftRequest(body);
+  } else if (kind === "meta") {
+    if (!String(body.content || "").trim() && !String(body.topic || "").trim()) return sendJson(res, 400, { error: "주제나 본문을 먼저 입력해 주세요." });
+    text = await buildMetaRequest(body);
+  } else if (kind === "style") {
+    text = await buildStyleRequest();
+    if (!text) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
+  } else if (kind === "topics") {
+    text = await buildTopicsRequest();
+  } else return sendJson(res, 404, { error: "not found" });
+  sendJson(res, 200, { text });
 }
 
 // ───────────────────────── 라우팅 ─────────────────────────
@@ -795,8 +971,10 @@ const server = http.createServer(async (req, res) => {
       if (!client) return sendJson(res, 503, { error: "AI 키가 설정되지 않았습니다. README의 '처음 한 번 설정'을 따라 .env 파일에 ANTHROPIC_API_KEY를 넣어 주세요." });
       return await aiRoutes[pathname](req, res);
     }
-    const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region))?$/);
+    const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import))?$/);
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
+    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics)$/);
+    if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
     if (pathname === "/api/style") return await handleStyle(req, res);

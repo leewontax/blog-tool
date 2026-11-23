@@ -3,6 +3,8 @@ const $ = (id) => document.getElementById(id);
 const NAVER_WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver";
 const STATUS_LABEL = { draft: "초안", scheduled: "발행 예정", published: "발행 완료" };
 
+let mode = "copy"; // "copy": 요청문 복사 방식(추가 비용 없음) · "api": API 키로 바로 작성
+const CLAUDE_URL = "https://claude.ai/new";
 let currentId = null; // 지금 편집 중인 글의 id (새 글이면 null)
 let dirty = false;
 let templates = [];
@@ -245,14 +247,120 @@ function confirmDiscard() {
   return !dirty || confirm("저장하지 않은 내용이 있습니다. 버리고 진행할까요?");
 }
 
+// ───────────── 요청문 복사 방식 ─────────────
+
+async function copyRequest(kind, body = {}) {
+  try {
+    const { text } = await api(`/api/prompt/${kind}`, { method: "POST", body });
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      fallbackCopy(text);
+    }
+    window.open(CLAUDE_URL, "_blank", "noopener");
+    toast("요청문을 복사했습니다. claude.ai 대화창에 붙여넣기(Ctrl+V) 후 보내세요.", 4500);
+    return true;
+  } catch (e) {
+    toast(e.message, 3500);
+    return false;
+  }
+}
+
+function cleanLine(t) {
+  return t.replace(/\*\*/g, "").replace(/^\s*\d+[.)]\s*/, "").replace(/^\s*[-*•]\s+/, "").replace(/^["'“”‘’]|["'“”‘’]$/g, "").trim();
+}
+
+function parseResult(text) {
+  const re = /===\s*(제목\s*후보|본문|해시태그)\s*===/g;
+  const marks = [...text.matchAll(re)];
+  if (!marks.length) return { body: text.trim(), titles: [], tags: [] };
+  const out = { titles: [], tags: [], body: "" };
+  marks.forEach((m, i) => {
+    const chunk = text.slice(m.index + m[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined).trim();
+    const name = m[1].replace(/\s/g, "");
+    if (name === "제목후보") out.titles = chunk.split("\n").map(cleanLine).filter((t) => t && !/^\(.*\)$/.test(t)).slice(0, 5);
+    else if (name === "본문") out.body = chunk;
+    else out.tags = chunk.split(/[,#\n]/).map((t) => t.trim().replace(/\s+/g, "")).filter(Boolean).slice(0, 15);
+  });
+  return out;
+}
+
+function showTitleChips(titles) {
+  const box = $("titleSuggest");
+  box.innerHTML = "";
+  for (const t of titles) {
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.textContent = t;
+    chip.title = "클릭하면 제목에 넣습니다";
+    chip.onclick = () => { $("title").value = t; markDirty(); };
+    box.appendChild(chip);
+  }
+}
+
+function applyResult() {
+  const text = $("pasteResult").value.trim();
+  if (!text) return toast("claude.ai 답변을 먼저 붙여넣어 주세요.");
+  const r = parseResult(text);
+  if (r.body) {
+    if ($("content").value.trim() && $("content").value.trim() !== r.body && !confirm("지금 본문을 붙여넣은 답변으로 바꿉니다. 계속할까요?")) return;
+    $("content").value = r.body;
+  }
+  if (r.titles.length) {
+    showTitleChips(r.titles);
+    if (!$("title").value.trim() || r.body) $("title").value = r.titles[0];
+  }
+  if (r.tags.length) $("tags").value = r.tags.join(", ");
+  setMode("edit");
+  updateCounter();
+  markDirty();
+  $("pasteResult").value = "";
+  const left = ($("content").value.match(/\[확인 필요\]/g) || []).length;
+  toast(
+    r.body
+      ? `적용했습니다.${left ? ` [확인 필요] ${left}곳을 꼭 확인해 주세요.` : " 내용을 검토해 주세요."} 제목 후보를 클릭하면 바꿀 수 있습니다.`
+      : "제목 후보와 해시태그를 적용했습니다.",
+    4000
+  );
+  $("title").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function draftRequestBody() {
+  const tpl = templates.find((t) => t.id === $("templateSelect").value);
+  return {
+    topic: $("topic").value.trim(),
+    audience: $("audience").value.trim(),
+    memo: $("memo").value.trim(),
+    templateGuide: tpl?.guide || "",
+    length: Number($("length").value),
+    webSearch: $("webSearch").checked,
+    useStyle: $("useStyle").checked,
+  };
+}
+
+function applyMode(aiReady) {
+  mode = aiReady ? "api" : "copy";
+  document.body.classList.toggle("mode-copy", mode === "copy");
+  const badge = $("aiBadge");
+  badge.textContent = mode === "api" ? "AI 바로 작성(API)" : "요청문 복사 방식 · 추가 비용 없음";
+  badge.className = `badge ${mode === "api" ? "ok" : ""}`;
+  badge.title = mode === "api" ? "API 키가 설정되어 있어 사용한 만큼 요금이 나옵니다." : "claude.ai에 붙여넣어 쓰는 방식입니다. 구독 요금 외 추가 비용이 없습니다.";
+  $("btnDraft").textContent = mode === "api" ? "AI 초안 작성" : "요청문 복사 → claude.ai 열기";
+  $("btnMeta").textContent = mode === "api" ? "제목·태그 추천받기" : "제목·태그 요청문 복사";
+  $("btnAnalyze").textContent = mode === "api" ? "말투 분석하기" : "말투 분석 요청문 복사";
+  $("webSearchInfo").textContent = mode === "api"
+    ? "국가법령정보센터·국세청·기재부 등 공식 사이트만 검색"
+    : "공식 자료 확인 요청을 넣습니다 (claude.ai에서 웹 검색이 켜져 있어야 합니다)";
+}
+
 // ───────────── AI ─────────────
 
 async function draft() {
   const topic = $("topic").value.trim();
   if (!topic) return toast("주제를 입력해 주세요.");
+  if (mode === "copy") return copyRequest("draft", draftRequestBody());
   if ($("content").value.trim() && !confirm("지금 본문을 AI 초안으로 바꿉니다. 계속할까요?")) return;
 
-  const tpl = templates.find((t) => t.id === $("templateSelect").value);
   const btn = $("btnDraft");
   const status = $("draftStatus");
   btn.disabled = true;
@@ -267,15 +375,7 @@ async function draft() {
     const res = await fetch("/api/draft", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        topic,
-        audience: $("audience").value.trim(),
-        memo: $("memo").value.trim(),
-        templateGuide: tpl?.guide || "",
-        length: Number($("length").value),
-        webSearch: $("webSearch").checked,
-        useStyle: $("useStyle").checked,
-      }),
+      body: JSON.stringify(draftRequestBody()),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "요청 실패");
 
@@ -328,21 +428,17 @@ async function suggestMeta(auto = false) {
   const content = $("content").value;
   const topic = $("topic").value.trim();
   if (!content.trim() && !topic) return toast("주제나 본문을 먼저 입력해 주세요.");
+  if (mode === "copy") {
+    if (await copyRequest("meta", { topic, content, useStyle: $("useStyle").checked }))
+      setTimeout(() => toast("답변을 복사해 왼쪽 'claude.ai 답변 붙여넣기' 칸에 넣고 적용을 누르세요.", 4500), 4600);
+    return;
+  }
   const btn = $("btnMeta");
   btn.disabled = true;
   btn.textContent = "추천 받는 중…";
   try {
     const { titles, tags } = await api("/api/meta", { method: "POST", body: { topic, content, useStyle: $("useStyle").checked } });
-    const box = $("titleSuggest");
-    box.innerHTML = "";
-    for (const t of titles) {
-      const chip = document.createElement("button");
-      chip.className = "chip";
-      chip.textContent = t;
-      chip.title = "클릭하면 제목에 넣습니다";
-      chip.onclick = () => { $("title").value = t; markDirty(); };
-      box.appendChild(chip);
-    }
+    showTitleChips(titles);
     if (!$("tags").value.trim() || !auto) $("tags").value = tags.join(", ");
     if (!$("title").value.trim() && titles[0]) $("title").value = titles[0];
     markDirty();
@@ -565,6 +661,7 @@ async function saveSample() {
 
 async function analyzeStyle() {
   if (!usedSamples().length) return toast("'반영'으로 켜 둔 글이 없습니다.");
+  if (mode === "copy") return copyRequest("style");
   if ($("styleProfile").value.trim() && !confirm("지금 말투 요약을 새 분석 결과로 바꿉니다. 계속할까요?")) return;
   const btn = $("btnAnalyze");
   btn.disabled = true;
@@ -662,9 +759,9 @@ function renderTopics(state) {
       : "";
     $("topicsTime").textContent = "";
     $("topicsNote").textContent = !state.aiReady
-      ? "AI 키를 넣으면 추천 주제가 표시됩니다."
+      ? "① '요청문 복사'를 누르면 claude.ai가 열립니다. 웹 검색을 켜고 붙여넣어 보내세요. ② 답변의 코드 블록을 복사해 '답변 붙여넣기'에 넣으면 TOP 5가 표시됩니다."
       : state.error || "최신 소식과 세금 일정을 조사하고 있습니다. 1~3분 걸립니다.";
-    $("tickerText").textContent = state.aiReady ? "추천 주제 조사 중…" : "AI 키가 필요합니다";
+    $("tickerText").textContent = state.aiReady ? "추천 주제 조사 중…" : "추천 주제 없음 — 요청문 복사로 받아 보세요";
     $("topicSources").classList.add("hidden");
     return;
   }
@@ -694,6 +791,10 @@ function renderTopics(state) {
   if (doc.trendError) notes.push(doc.trendError);
   else if (!state.datalab) notes.push("네이버 데이터랩 키를 넣으면 실제 검색 추이로 표시됩니다");
   if (state.error) notes.push(`최근 갱신 실패: ${state.error}`);
+  if (!state.aiReady) {
+    const days = (Date.now() - new Date(doc.generatedAt).getTime()) / 86400_000;
+    if (days >= 3) notes.unshift(`${Math.floor(days)}일 전 목록입니다. '요청문 복사'로 새로 받아 보세요`);
+  }
   notes.push("날짜·기한은 글 쓰기 전 꼭 확인하세요");
   $("topicsNote").textContent = notes.join(" · ");
   $("topicsTime").textContent = `${timeAgo(doc.generatedAt)} 갱신${state.refreshing ? " · 새로 조사 중…" : ""}`;
@@ -747,7 +848,7 @@ async function changeRegion() {
   if (!region || !region.trim() || region.trim() === topicsDoc?.region) return;
   try {
     await api("/api/topics/region", { method: "PUT", body: { region: region.trim() } });
-    toast(`${region.trim()} 기준으로 새로 조사합니다.`);
+    toast(mode === "api" ? `${region.trim()} 기준으로 새로 조사합니다.` : `지역을 ${region.trim()}(으)로 바꿨습니다. '요청문 복사'로 새 추천을 받아 보세요.`, 4000);
     loadTopics();
   } catch (e) {
     toast(e.message, 3500);
@@ -770,6 +871,25 @@ $("topicList").onclick = (e) => {
   if (b) useTopic(Number(b.dataset.topic));
 };
 $("btnTopicsRefresh").onclick = refreshTopics;
+$("btnTopicsCopy").onclick = () => copyRequest("topics");
+$("btnTopicsPaste").onclick = () => {
+  $("topicPasteBox").classList.toggle("hidden");
+  if (!$("topicPasteBox").classList.contains("hidden")) $("topicPaste").focus();
+};
+$("btnTopicsPasteCancel").onclick = () => $("topicPasteBox").classList.add("hidden");
+$("btnTopicsImport").onclick = async () => {
+  const text = $("topicPaste").value.trim();
+  if (!text) return toast("claude.ai 답변을 붙여넣어 주세요.");
+  try {
+    await api("/api/topics/import", { method: "POST", body: { text } });
+    $("topicPaste").value = "";
+    $("topicPasteBox").classList.add("hidden");
+    toast("추천 주제를 갱신했습니다.");
+    loadTopics();
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+};
 $("regionBtn").onclick = changeRegion;
 $("ticker").onclick = () => {
   showView("write");
@@ -803,6 +923,7 @@ $("status").addEventListener("change", () => {
 });
 
 $("btnDraft").onclick = draft;
+$("btnApplyResult").onclick = applyResult;
 $("btnMeta").onclick = () => suggestMeta(false);
 $("btnSave").onclick = save;
 $("btnNew").onclick = () => confirmDiscard() && fillForm(null);
@@ -848,11 +969,10 @@ window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); 
 (async () => {
   try {
     const s = await api("/api/status");
-    const badge = $("aiBadge");
-    badge.textContent = s.aiReady ? "AI 연결됨" : "AI 키 없음";
-    badge.className = `badge ${s.aiReady ? "ok" : "off"}`;
-    if (!s.aiReady) badge.title = "README의 '처음 한 번 설정'을 따라 .env에 API 키를 넣으세요.";
-  } catch {}
+    applyMode(s.aiReady);
+  } catch {
+    applyMode(false);
+  }
   await loadTemplates();
   await loadSamples();
   fillForm(null);
