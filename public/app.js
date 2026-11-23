@@ -221,6 +221,7 @@ let autosaveTimer = null;
 let saving = null;
 
 function markDirty() {
+  renderTagChips();
   dirty = true;
   changeSeq++;
   $("saveState").textContent = "저장 안 됨 · 잠시 후 자동 저장";
@@ -255,6 +256,7 @@ function fillForm(p) {
   $("topic").value = p?.topic || "";
   $("content").value = p?.content || "";
   $("tags").value = (p?.tags || []).join(", ");
+  renderTagChips();
   $("status").value = p?.status || "draft";
   $("scheduledAt").value = p?.scheduledAt || "";
   $("naverUrl").value = p?.naverUrl || "";
@@ -2131,7 +2133,42 @@ $("btnNew").onclick = () => confirmDiscard() && fillForm(null);
 $("btnOpenNaver").onclick = () => window.open(NAVER_WRITE_URL, "_blank", "noopener");
 $("btnCopyTitle").onclick = () => ($("title").value.trim() ? copyText($("title").value.trim(), "제목") : toast("제목이 비어 있습니다."));
 $("btnCopyBody").onclick = copyBody;
-$("btnCopyTags").onclick = () => (tagList().length ? copyText(tagList().join(","), "태그") : toast("태그가 비어 있습니다."));
+// 태그 하나씩 복사 (네이버 태그 칸은 여러 개를 한 번에 붙여넣으면 하나로 뭉침)
+let copiedTags = new Set();
+let lastTagKey = "";
+
+function renderTagChips() {
+  const tags = tagList();
+  const key = tags.join(",");
+  if (key !== lastTagKey) { copiedTags = new Set(); lastTagKey = key; } // 태그가 바뀌면 처음부터
+  const done = tags.filter((t) => copiedTags.has(t)).length;
+  $("tagChips").innerHTML = tags.map((t, i) => `<button class="chip ${copiedTags.has(t) ? "done" : ""}" data-tag="${i}">${copiedTags.has(t) ? "✓ " : ""}${escapeHtml(t)}</button>`).join("");
+  $("tagProgress").textContent = tags.length ? (done === tags.length ? `모두 복사함 (${tags.length}개)` : `${done}/${tags.length}개 복사함`) : "태그가 없습니다";
+  $("btnCopyNextTag").textContent = tags.length && done === tags.length ? "처음부터 다시" : "다음 태그 복사";
+}
+
+async function copyOneTag(tag) {
+  try {
+    await navigator.clipboard.writeText(tag);
+  } catch {
+    fallbackCopy(tag);
+  }
+  copiedTags.add(tag);
+  renderTagChips();
+  const tags = tagList();
+  toast(`'${tag}' 복사 (${tags.indexOf(tag) + 1}/${tags.length}) — 네이버 태그 칸에 Ctrl+V 후 Enter`, 2500);
+}
+
+$("btnCopyNextTag").onclick = () => {
+  const tags = tagList();
+  if (!tags.length) return toast("태그가 비어 있습니다.");
+  if (tags.every((t) => copiedTags.has(t))) { copiedTags = new Set(); renderTagChips(); return toast("처음부터 다시 복사할 수 있습니다."); }
+  copyOneTag(tags.find((t) => !copiedTags.has(t)));
+};
+$("tagChips").onclick = (e) => {
+  const b = e.target.closest("[data-tag]");
+  if (b) copyOneTag(tagList()[Number(b.dataset.tag)]);
+};
 
 $("filterStatus").onchange = renderPosts;
 $("filterText").oninput = renderPosts;

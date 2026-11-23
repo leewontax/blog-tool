@@ -363,3 +363,9 @@ button.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--acce
 .thumb-expect small { display: block; font-size: 13px; font-weight: 600; color: #3d4642; }
 .thumb-wrap { grid-template-columns: 1fr minmax(220px, 360px); }
 @media (max-width: 700px) { .thumb-wrap { grid-template-columns: 1fr; } }
+
+/* 태그 하나씩 복사 */
+.tag-copy { display: flex; align-items: center; gap: 8px; margin: 6px 0 4px; flex-wrap: wrap; }
+.tag-chips { margin: 6px 0 0; }
+.tag-chips .chip { background: var(--panel); border: 1px solid var(--line); }
+.tag-chips .chip.done { background: var(--accent-soft); border-color: transparent; color: var(--accent); }

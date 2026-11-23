@@ -247,7 +247,15 @@
           <li><button id="btnOpenNaver" class="naver">네이버 글쓰기 창 열기</button></li>
           <li><button id="btnCopyTitle">제목 복사</button> → 네이버 제목 칸에 붙여넣기(Ctrl+V)</li>
           <li><button id="btnCopyBody">본문 복사(서식 포함)</button> → 본문 칸에 붙여넣기</li>
-          <li><button id="btnCopyTags">태그 복사</button> → 태그 칸에 붙여넣기</li>
+          <li>
+            <b>태그</b>: 네이버 태그 칸은 한꺼번에 붙여넣으면 하나로 뭉치므로 <b>하나씩</b> 넣습니다.
+            <div class="tag-copy">
+              <button id="btnCopyNextTag">다음 태그 복사</button>
+              <span id="tagProgress" class="small muted"></span>
+            </div>
+            <span class="small muted">버튼 → 네이버 태그 칸에 <b>Ctrl+V</b> → <b>Enter</b> → 다시 버튼 (아래 태그를 눌러 하나씩 골라 복사해도 됩니다)</span>
+            <div id="tagChips" class="chips tag-chips"></div>
+          </li>
           <li>본문의 노란 <b>[이미지 N 자리]</b>마다: 위 <b>본문 이미지</b>의 <b>이미지 복사</b> → 그 자리에 붙여넣고 안내 줄 지우기</li>
           <li><b>대표 이미지</b>: '그림 저장' 후 네이버에서 사진 올리기 → 대표 사진으로 지정</li>
           <li>발행 후 글 주소를 위 <b>네이버 글 주소</b>에 넣고 상태를 <b>발행 완료</b>로 저장</li>
