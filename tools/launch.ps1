@@ -23,11 +23,14 @@ if (Test-Path -LiteralPath $EnvFile) {
 }
 $Url = "http://localhost:$Port"
 
+# 프로그램이 켜졌는지 확인: 인터넷 설정(프록시)이나 localhost 주소 해석의 영향을 받지 않도록
+# 127.0.0.1 포트에 직접 연결해 봅니다.
 function Test-Running {
+  $client = New-Object System.Net.Sockets.TcpClient
   try {
-    $r = Invoke-WebRequest -Uri "$Url/api/status" -UseBasicParsing -TimeoutSec 2
-    return ($r.StatusCode -eq 200)
-  } catch { return $false }
+    $task = $client.ConnectAsync('127.0.0.1', $Port)
+    return ($task.Wait(1500) -and $client.Connected)
+  } catch { return $false } finally { $client.Close() }
 }
 
 # 1) 이미 실행 중
@@ -67,12 +70,12 @@ if ($HasKey -and -not (Test-Path -LiteralPath (Join-Path $AppDir 'node_modules\@
 }
 
 # 4) 프로그램 켜기 (최소화된 창 — 이 창을 닫으면 프로그램이 꺼집니다)
-$NodeArgs = @('--env-file-if-exists=.env', 'server.js')
+$NodeArgs = @('server.js')   # 설정 파일(.env)은 프로그램이 직접 읽음
 Start-Process -FilePath $Node.Source -ArgumentList $NodeArgs -WorkingDirectory $AppDir -WindowStyle Minimized
 
 for ($i = 0; $i -lt 40; $i++) {
   Start-Sleep -Milliseconds 500
-  if (Test-Running) { Start-Process $Url; exit 0 }
+  if (Test-Running) { Start-Sleep -Milliseconds 300; Start-Process $Url; exit 0 }
 }
 Show-Msg "프로그램을 시작하지 못했습니다.`n작업 표시줄의 '블로그 글 도우미' 창을 열어 메시지를 확인해 주세요." 'Error'
 exit 1

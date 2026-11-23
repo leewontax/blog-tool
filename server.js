@@ -11,6 +11,10 @@ import { buildAutoTopics } from "./topics-auto.js";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "public");
 const DATA_DIR = path.join(here, "data");
+// 설정 파일(.env)이 있으면 읽음 — 없어도 정상(요청문 복사 방식은 설정 불필요)
+try {
+  process.loadEnvFile(path.join(here, ".env"));
+} catch {}
 const PORT = Number(process.env.PORT) || 3000;
 const MODEL = "claude-opus-5-5";
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
