@@ -201,3 +201,17 @@ body.mode-copy .api-only { display: none !important; }
 .copy-steps textarea { background: var(--panel); }
 .paste-box { margin: 6px 0 12px; }
 .paste-box textarea { margin-bottom: 8px; font-size: 13px; }
+
+/* 2차 검증 */
+.reviewbox { margin-top: 20px; padding: 14px 16px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--bg); }
+.reviewbox h3 { margin: 0; }
+.reviewbox > p { margin: 8px 0; }
+.reviewbox textarea { background: var(--panel); font-size: 13px; margin-bottom: 8px; }
+.pill.ok { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
+.pill.fix { background: var(--warn); font-weight: 700; }
+.pill.stop { background: #f8d7d3; color: var(--danger); font-weight: 700; }
+.review-stale { color: var(--danger); font-size: 13px; margin: 8px 0 0; }
+.review-result { min-height: 0; margin-top: 10px; font-size: 14px; max-height: 520px; overflow: auto; }
+.review-result table { font-size: 13px; width: 100%; }
+.review-result td:nth-child(3) { white-space: nowrap; }
+.review-result .bad { color: var(--danger); font-weight: 700; }

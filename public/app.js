@@ -5,6 +5,8 @@ const STATUS_LABEL = { draft: "초안", scheduled: "발행 예정", published: "
 
 let mode = "copy"; // "copy": 요청문 복사 방식(추가 비용 없음) · "api": API 키로 바로 작성
 const CLAUDE_URL = "https://claude.ai/new";
+const CHATGPT_URL = "https://chatgpt.com/";
+let currentReview = null; // 2차 검증 결과
 let currentId = null; // 지금 편집 중인 글의 id (새 글이면 null)
 let dirty = false;
 let templates = [];
@@ -143,6 +145,8 @@ async function copyBody() {
   if (!md.trim()) return toast("본문이 비어 있습니다.");
   const left = (md.match(/\[확인 필요\]/g) || []).length;
   if (left && !confirm(`본문에 [확인 필요] 표시가 ${left}곳 남아 있습니다.\n확인하지 않은 내용이 그대로 발행될 수 있습니다.\n\n그래도 복사할까요?`)) return;
+  const reviewNote = reviewStatusNote();
+  if (reviewNote && !confirm(`${reviewNote}\n\n그래도 본문을 복사할까요?`)) return;
   const html = markdownToHtml(md, true);
   try {
     await navigator.clipboard.write([
@@ -204,6 +208,7 @@ function readForm() {
     status: $("status").value,
     scheduledAt: $("scheduledAt").value,
     naverUrl: $("naverUrl").value.trim(),
+    review: currentReview,
   };
 }
 
@@ -216,6 +221,10 @@ function fillForm(p) {
   $("status").value = p?.status || "draft";
   $("scheduledAt").value = p?.scheduledAt || "";
   $("naverUrl").value = p?.naverUrl || "";
+  currentReview = p?.review || null;
+  $("reviewPaste").value = "";
+  renderReview();
+  $("btnReviewToggle").textContent = "검증 결과 보기";
   $("titleSuggest").innerHTML = "";
   $("sources").classList.add("hidden");
   $("draftStatus").textContent = "";
@@ -249,7 +258,7 @@ function confirmDiscard() {
 
 // ───────────── 요청문 복사 방식 ─────────────
 
-async function copyRequest(kind, body = {}) {
+async function copyRequest(kind, body = {}, url = CLAUDE_URL, site = "claude.ai") {
   try {
     const { text } = await api(`/api/prompt/${kind}`, { method: "POST", body });
     try {
@@ -257,8 +266,8 @@ async function copyRequest(kind, body = {}) {
     } catch {
       fallbackCopy(text);
     }
-    window.open(CLAUDE_URL, "_blank", "noopener");
-    toast("요청문을 복사했습니다. claude.ai 대화창에 붙여넣기(Ctrl+V) 후 보내세요.", 4500);
+    window.open(url, "_blank", "noopener");
+    toast(`요청문을 복사했습니다. ${site} 대화창에 붙여넣기(Ctrl+V) 후 보내세요.`, 4500);
     return true;
   } catch (e) {
     toast(e.message, 3500);
@@ -352,6 +361,80 @@ function applyMode(aiReady) {
     ? "국가법령정보센터·국세청·기재부 등 공식 사이트만 검색"
     : "공식 자료 확인 요청을 넣습니다 (claude.ai에서 웹 검색이 켜져 있어야 합니다)";
 }
+
+// ───────────── 2차 검증 (ChatGPT) ─────────────
+
+function contentHash(text) {
+  let h = 5381;
+  const t = text.trim();
+  for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0;
+  return `${t.length}-${(h >>> 0).toString(36)}`;
+}
+
+function parseReview(text) {
+  const v = text.match(/판정\s*[:：]\s*[*\s]*(발행\s*가능|수정\s*후\s*발행|발행\s*보류)/);
+  const verdict = v ? v[1].replace(/\s+/g, " ") : "판정 없음";
+  const n = text.match(/수정\s*필요\s*항목\s*수\s*[:：]\s*[*\s]*(\d+)/);
+  const rows = text.split("\n").filter((l) => /^\s*\|/.test(l) && /수정\s*필요/.test(l) && !/판정\(/.test(l)).length;
+  return { verdict, issues: n ? Number(n[1]) : rows };
+}
+
+function renderReview() {
+  const badge = $("reviewBadge");
+  const r = currentReview;
+  $("btnReviewToggle").classList.toggle("hidden", !r);
+  if (!r) {
+    badge.textContent = "검증 안 함";
+    badge.className = "pill draft";
+    $("reviewStale").classList.add("hidden");
+    $("reviewResult").classList.add("hidden");
+    return;
+  }
+  const cls = { "발행 가능": "ok", "수정 후 발행": "fix", "발행 보류": "stop" }[r.verdict] || "draft";
+  badge.textContent = `${r.verdict}${r.issues ? ` · 수정 ${r.issues}건` : ""} · ${fmtDate(r.reviewedAt)}`;
+  badge.className = `pill ${cls}`;
+  $("reviewStale").classList.toggle("hidden", r.contentHash === contentHash($("content").value));
+  const md = r.text.replace(/^\s*===\s*(.+?)\s*===\s*$/gm, "## $1");
+  $("reviewResult").innerHTML = markdownToHtml(md).replace(/(수정 필요|확인 불가|발행 보류)/g, '<span class="bad">$1</span>');
+}
+
+function reviewStatusNote() {
+  const r = currentReview;
+  if (!r) return "2차 검증(ChatGPT)을 하지 않았습니다.";
+  const notes = [];
+  if (r.verdict === "발행 보류") notes.push("2차 검증 판정이 '발행 보류'입니다.");
+  else if (r.verdict === "수정 후 발행") notes.push(`2차 검증에서 수정이 필요하다고 나왔습니다${r.issues ? `(${r.issues}건)` : ""}. 반영하셨나요?`);
+  if (r.contentHash !== contentHash($("content").value)) notes.push("검증 이후 본문이 수정되었습니다.");
+  return notes.join("\n");
+}
+
+async function saveReview() {
+  const text = $("reviewPaste").value.trim();
+  if (!text) return toast("ChatGPT 답변을 붙여넣어 주세요.");
+  if (!$("content").value.trim()) return toast("본문이 비어 있습니다.");
+  const { verdict, issues } = parseReview(text);
+  currentReview = { text, verdict, issues, contentHash: contentHash($("content").value), reviewedAt: new Date().toISOString() };
+  $("reviewPaste").value = "";
+  renderReview();
+  $("reviewResult").classList.remove("hidden");
+  $("btnReviewToggle").textContent = "검증 결과 접기";
+  markDirty();
+  await save();
+  if (verdict === "판정 없음") toast("판정 문구를 찾지 못했습니다. 결과 내용을 직접 읽어 확인해 주세요.", 4000);
+}
+
+$("btnReviewCopy").onclick = () => {
+  const content = $("content").value;
+  if (!content.trim()) return toast("검증할 본문이 없습니다.");
+  copyRequest("review", { title: $("title").value.trim(), topic: $("topic").value.trim(), content }, CHATGPT_URL, "ChatGPT");
+};
+$("btnReviewSave").onclick = saveReview;
+$("btnReviewToggle").onclick = () => {
+  const box = $("reviewResult");
+  box.classList.toggle("hidden");
+  $("btnReviewToggle").textContent = box.classList.contains("hidden") ? "검증 결과 보기" : "검증 결과 접기";
+};
+$("content").addEventListener("input", () => currentReview && $("reviewStale").classList.toggle("hidden", currentReview.contentHash === contentHash($("content").value)));
 
 // ───────────── AI ─────────────
 
@@ -466,7 +549,7 @@ function renderPosts() {
     .map(
       (p) => `<tr data-id="${p.id}">
         <td class="title">${escapeHtml(p.title || "(제목 없음)")}${p.naverUrl ? ` <a href="${escapeHtml(p.naverUrl)}" target="_blank" rel="noopener" class="small">↗</a>` : ""}</td>
-        <td><span class="pill ${p.status}">${STATUS_LABEL[p.status]}</span></td>
+        <td><span class="pill ${p.status}">${STATUS_LABEL[p.status]}</span>${p.review ? ` <span class="pill ${{ "발행 가능": "ok", "수정 후 발행": "fix", "발행 보류": "stop" }[p.review.verdict] || "draft"}" title="2차 검증">${p.review.verdict === "판정 없음" ? "검증함" : p.review.verdict}</span>` : ""}</td>
         <td>${p.scheduledAt ? fmtDate(p.scheduledAt) : ""}</td>
         <td class="muted">${fmtDate(p.updatedAt)}</td>
         <td><button class="ghost danger small" data-del="${p.id}">삭제</button></td>

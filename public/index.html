@@ -141,8 +141,28 @@
         <button id="btnNew" class="ghost">새 글</button>
       </div>
 
+      <div class="reviewbox">
+        <div class="list-head">
+          <h3>3. 2차 검증 (ChatGPT)</h3>
+          <span id="reviewBadge" class="pill draft">검증 안 함</span>
+        </div>
+        <p class="small muted">다른 AI(ChatGPT)가 세율·한도·기한·조문, [확인 필요] 부분, 광고 표현, 개인정보를 다시 확인합니다. 추가 비용은 없습니다.</p>
+        <ol class="steps small">
+          <li><button id="btnReviewCopy">검증 요청문 복사 → ChatGPT 열기</button></li>
+          <li>ChatGPT에 붙여넣어 보내기 <span class="muted">(웹 검색이 되는 상태면 더 정확합니다)</span></li>
+          <li>답변 아래 <b>복사</b> 버튼 → 아래 칸에 붙여넣고 <b>검증 결과 저장</b></li>
+        </ol>
+        <textarea id="reviewPaste" rows="4" placeholder="===검증 요약=== ..."></textarea>
+        <div class="actions">
+          <button id="btnReviewSave" class="primary">검증 결과 저장</button>
+          <button id="btnReviewToggle" class="ghost hidden">검증 결과 보기</button>
+        </div>
+        <p id="reviewStale" class="review-stale hidden">⚠ 검증 이후 본문이 수정되었습니다. 크게 고쳤다면 다시 검증해 주세요.</p>
+        <div id="reviewResult" class="preview review-result hidden"></div>
+      </div>
+
       <div class="copybox">
-        <h3>3. 네이버에 붙여넣기</h3>
+        <h3>4. 네이버에 붙여넣기</h3>
         <ol class="steps">
           <li><button id="btnOpenNaver" class="naver">네이버 글쓰기 창 열기</button></li>
           <li><button id="btnCopyTitle">제목 복사</button> → 네이버 제목 칸에 붙여넣기(Ctrl+V)</li>

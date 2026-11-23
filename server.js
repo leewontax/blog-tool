@@ -324,6 +324,20 @@ async function handleMeta(req, res) {
 
 const POST_STATUSES = ["draft", "scheduled", "published"];
 
+const REVIEW_VERDICTS = ["발행 가능", "수정 후 발행", "발행 보류", "판정 없음"];
+
+// 2차 검증(ChatGPT) 결과
+function cleanReview(r) {
+  if (!r || typeof r !== "object" || !String(r.text || "").trim()) return null;
+  return {
+    text: String(r.text).slice(0, 60000),
+    verdict: REVIEW_VERDICTS.includes(r.verdict) ? r.verdict : "판정 없음",
+    issues: Math.max(0, Math.min(999, Number(r.issues) || 0)),
+    contentHash: String(r.contentHash || "").slice(0, 40),
+    reviewedAt: r.reviewedAt || new Date().toISOString(),
+  };
+}
+
 function cleanPost(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -335,6 +349,7 @@ function cleanPost(input, existing = {}) {
     status: POST_STATUSES.includes(input.status) ? input.status : existing.status || "draft",
     scheduledAt: input.scheduledAt ?? existing.scheduledAt ?? "",
     naverUrl: String(input.naverUrl ?? existing.naverUrl ?? "").slice(0, 500),
+    review: cleanReview(input.review !== undefined ? input.review : existing.review),
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };
@@ -854,6 +869,45 @@ ${samples.map((s, i) => `<글 번호="${i + 1}">\n${s.content}\n</글>`).join("\
 글 수가 적어 판단하기 어려운 항목은 "판단 어려움"이라고 적어 주세요. 전체 1,500자 이내로, 지침 내용만 답해 주세요. 고객 이름 등 개인정보는 옮겨 적지 마세요.`;
 }
 
+// 2차 검증 요청문 (ChatGPT에 붙여넣기)
+function buildReviewRequest(body) {
+  const today = kstDate();
+  return `당신은 대한민국 세법에 밝은 검수 담당자입니다. 아래는 세무사가 네이버 블로그에 올리려는 글(다른 AI가 작성한 초안)입니다.
+발행 전 2차 검증을 해 주세요. 오늘은 ${today}입니다.
+
+[검증 기준]
+1. 사실 확인: 세율·공제 한도·금액·신고/납부 기한·법령명과 조문 번호·시행일·적용 귀속연도가 오늘 기준 최신 법령과 맞는지
+   - 웹 검색을 사용할 수 있다면 ${OFFICIAL_SITES_TEXT} 등 공식 자료로 확인하고 출처 링크를 적어 주세요.
+   - 블로그·카페 글은 근거로 쓰지 마세요.
+   - 확인할 수 없으면 추측하지 말고 "확인 불가"로 판정해 주세요.
+2. 본문에 [확인 필요]로 표시된 곳은 하나도 빠짐없이 확인해 올바른 내용을 알려 주세요.
+3. 계산 예시가 있으면 산식대로 다시 계산해 맞는지 확인해 주세요.
+4. 귀속연도(소득이 생긴 해)와 신고연도를 혼동한 곳, 개정 전후 규정을 섞어 쓴 곳이 있는지
+5. 독자가 오해하기 쉬운 단정 표현, 예외·요건 누락
+6. 세무사 광고로 부적절할 수 있는 표현 (과장·단정·"무조건/100%", 다른 세무사와 비교, 수임료 할인 등)
+7. 실명·주민등록번호·연락처 등 개인정보가 들어 있는지
+
+[답변 형식] 아래 형식 그대로, 구분선(=== ===)을 지우지 말고 답해 주세요.
+
+===검증 요약===
+판정: (발행 가능 / 수정 후 발행 / 발행 보류 중 하나만)
+수정 필요 항목 수: (숫자)
+한 줄 의견:
+===항목별 검증===
+| 번호 | 본문 내용(짧게 인용) | 판정(적정/수정 필요/확인 불가) | 근거(법령·조문·출처 링크) | 수정안 |
+|---|---|---|---|---|
+===[확인 필요] 확인 결과===
+- (본문의 [확인 필요] 각각에 대해: 위치 → 확인된 내용 → 근거)
+===표현·광고·개인정보 점검===
+- (문제 없으면 "문제 없음")
+
+──────── 검증할 글 ────────
+제목: ${body.title || "(제목 없음)"}
+${body.topic ? `주제: ${body.topic}
+` : ""}
+${String(body.content || "")}`;
+}
+
 async function buildTopicsRequest() {
   const { region } = await readStore("settings", { region: "안성시" });
   const old = await readStore("topics", null);
@@ -942,6 +996,9 @@ async function handlePromptRequest(req, res, kind) {
     if (!text) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
   } else if (kind === "topics") {
     text = await buildTopicsRequest();
+  } else if (kind === "review") {
+    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "검증할 본문이 없습니다." });
+    text = buildReviewRequest(body);
   } else return sendJson(res, 404, { error: "not found" });
   sendJson(res, 200, { text });
 }
@@ -973,7 +1030,7 @@ const server = http.createServer(async (req, res) => {
     }
     const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import))?$/);
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
-    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics)$/);
+    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
