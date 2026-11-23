@@ -1,4 +1,5 @@
 # Windows 실행 파일은 줄바꿈(CRLF)·인코딩을 그대로 보존
 *.bat -text
 *.ps1 -text
+*.vbs -text
 *.ico binary

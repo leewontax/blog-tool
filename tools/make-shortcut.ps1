@@ -1,11 +1,13 @@
 ﻿# 바탕화면에 '블로그 글 도우미' 아이콘 만들기 (make-desktop-icon.bat이 실행합니다)
 $ErrorActionPreference = 'Stop'
-$AppDir = Split-Path -Parent $PSScriptRoot
-Add-Type -AssemblyName PresentationFramework
-
 try {
+  $AppDir = Split-Path -Parent $PSScriptRoot
   $Desktop = [Environment]::GetFolderPath('Desktop')   # OneDrive 바탕화면도 자동으로 찾음
+  if (-not $Desktop -or -not (Test-Path -LiteralPath $Desktop)) { throw "바탕화면 폴더를 찾지 못했습니다." }
   $Lnk = Join-Path $Desktop '블로그 글 도우미.lnk'
+  Write-Host "  프로그램 폴더: $AppDir"
+  Write-Host "  바탕화면 폴더: $Desktop"
+
   $Shell = New-Object -ComObject WScript.Shell
   $Sc = $Shell.CreateShortcut($Lnk)
   $Sc.TargetPath = Join-Path $AppDir 'start-blog-tool.bat'
@@ -14,8 +16,12 @@ try {
   $Sc.WindowStyle = 7   # 실행 창 최소화
   $Sc.Description = '블로그 글 도우미 실행'
   $Sc.Save()
-  [System.Windows.MessageBox]::Show("바탕화면에 '블로그 글 도우미' 아이콘을 만들었습니다.`n`n이제 아이콘을 더블클릭하면 프로그램이 켜지고 브라우저가 열립니다.`n`n※ 프로그램 폴더를 다른 곳으로 옮기면 이 파일을 다시 실행해 주세요.", '블로그 글 도우미', 'OK', 'Information') | Out-Null
+
+  if (-not (Test-Path -LiteralPath $Lnk)) { throw "아이콘 파일이 만들어지지 않았습니다(보안 프로그램 차단 가능)." }
+  Write-Host "  아이콘을 만들었습니다: $Lnk"
+  exit 0
 } catch {
-  [System.Windows.MessageBox]::Show("아이콘을 만들지 못했습니다.`n$($_.Exception.Message)", '블로그 글 도우미', 'OK', 'Error') | Out-Null
+  Write-Host ""
+  Write-Host "  [오류] $($_.Exception.Message)" -ForegroundColor Red
   exit 1
 }
