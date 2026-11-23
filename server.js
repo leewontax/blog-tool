@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
+import { upcoming, weekday } from "./public/taxcal.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "public");
@@ -520,6 +521,7 @@ async function handleBackup(req, res) {
       templates: await readStore("templates", DEFAULT_TEMPLATES),
       samples: await readStore("samples", []),
       style: await readStore("style", { profile: "" }),
+      calendar: await readStore("calendar", CAL_DEFAULT),
     };
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -548,6 +550,7 @@ async function handleBackup(req, res) {
       );
     }
     if (b.style && typeof b.style.profile === "string") await writeStore("style", b.style);
+    if (b.calendar && typeof b.calendar === "object" && Array.isArray(b.calendar.events)) await writeStore("calendar", { extraHolidays: b.calendar.extraHolidays || {}, events: b.calendar.events });
     await writeStore("posts", b.posts.map((p) => cleanPost(p, { id: p.id, createdAt: p.createdAt })));
     await writeStore("templates", b.templates.filter((t) => t && t.name).map((t) => ({ id: t.id || randomUUID(), name: String(t.name), guide: String(t.guide || "") })));
     return sendJson(res, 200, { ok: true });
@@ -949,6 +952,11 @@ async function buildTopicsRequest() {
   const { region } = await readStore("settings", { region: "안성시" });
   const old = await readStore("topics", null);
   const today = kstDate();
+  const cal = await readStore("calendar", CAL_DEFAULT);
+  const soon = upcoming(today, 45, cal.extraHolidays)
+    .filter((e) => e.level >= 2)
+    .map((e) => `- ${e.due}(${weekday(e.due)}) ${e.name}${e.shifted ? ` (법정 ${e.legal}, 휴일로 연장)` : ""}`)
+    .join("\n");
   return `오늘은 ${today}입니다. 저는 ${region}에서 일하는 세무사이고, 네이버 블로그에 올릴 글감을 찾고 있습니다.
 웹 검색으로 아래를 조사한 뒤, 지금 글을 쓰면 방문자가 가장 많이 올 것 같은 주제 5개를 골라 주세요.
 
@@ -958,7 +966,7 @@ async function buildTopicsRequest() {
 3. 최근 시행됐거나 곧 시행되는 세법 개정 중 개인·소상공인·농업인에게 영향이 큰 것.
 4. 이 시기에 사람들이 네이버에서 많이 찾아볼 만한 세금 질문.
 
-[고르는 기준]
+${soon ? `[참고: 제 앱의 세무달력 기준 45일 안의 주요 기한 — 맞는지 함께 확인해 주세요]\n${soon}\n\n` : ""}[고르는 기준]
 - 마감이 임박한 신고·납부 기한은 검색이 몰리므로 우선
 - ${region} 지역 소식과 연결된 주제를 최소 2개 포함
 - 5개의 분류가 한쪽으로 몰리지 않게, 너무 넓은 주제(예: "절세 방법")보다 구체적인 주제
@@ -1044,6 +1052,41 @@ async function handlePromptRequest(req, res, kind) {
   sendJson(res, 200, { text });
 }
 
+// ───────────────────────── 세무달력 (내 일정·추가 휴일) ─────────────────────────
+
+const CAL_DEFAULT = { extraHolidays: {}, events: [] };
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+async function handleCalendar(req, res, sub, id) {
+  const cal = await readStore("calendar", CAL_DEFAULT);
+  if (req.method === "GET" && !sub) return sendJson(res, 200, cal);
+  if (sub === "holidays" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!DATE_RE.test(b.date || "")) return sendJson(res, 400, { error: "날짜를 확인해 주세요." });
+    cal.extraHolidays[b.date] = String(b.name || "임시공휴일").slice(0, 30);
+    await writeStore("calendar", cal);
+    return sendJson(res, 200, cal);
+  }
+  if (sub === "holidays" && req.method === "DELETE" && DATE_RE.test(id || "")) {
+    delete cal.extraHolidays[id];
+    await writeStore("calendar", cal);
+    return sendJson(res, 200, cal);
+  }
+  if (sub === "events" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!DATE_RE.test(b.date || "") || !String(b.title || "").trim()) return sendJson(res, 400, { error: "날짜와 일정 이름을 입력해 주세요." });
+    cal.events.push({ id: randomUUID(), date: b.date, title: String(b.title).trim().slice(0, 100), note: String(b.note || "").slice(0, 500) });
+    await writeStore("calendar", cal);
+    return sendJson(res, 200, cal);
+  }
+  if (sub === "events" && req.method === "DELETE" && id) {
+    cal.events = cal.events.filter((e) => e.id !== id);
+    await writeStore("calendar", cal);
+    return sendJson(res, 200, cal);
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
 // ───────────────────────── 라우팅 ─────────────────────────
 
 async function serveStatic(req, res, pathname) {
@@ -1071,6 +1114,8 @@ const server = http.createServer(async (req, res) => {
     }
     const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import))?$/);
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
+    const calMatch = pathname.match(/^\/api\/calendar(?:\/(holidays|events)(?:\/([\w-]+))?)?$/);
+    if (calMatch) return await handleCalendar(req, res, calMatch[1], calMatch[2]);
     const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);

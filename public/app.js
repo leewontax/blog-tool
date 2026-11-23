@@ -1,4 +1,5 @@
 // 블로그 글 작성 도우미 — 화면 동작
+import { eventsForYear, postIdeas, holidayName, hasHolidayData, weekday, ymd } from "./taxcal.js";
 const $ = (id) => document.getElementById(id);
 const NAVER_WRITE_URL = "https://blog.naver.com/GoBlogWrite.naver";
 const STATUS_LABEL = { draft: "초안", scheduled: "발행 예정", published: "발행 완료" };
@@ -1056,6 +1057,260 @@ $("ticker").onclick = () => {
 setInterval(() => showTicker(true), 3500);
 setInterval(() => topicsDoc?.doc && ($("topicsTime").textContent = `${timeAgo(topicsDoc.doc.generatedAt)} 갱신${topicsDoc.refreshing ? " · 새로 조사 중…" : ""}`), 60_000);
 
+// ───────────── 세무달력 ─────────────
+
+const cal = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, sel: null, data: { extraHolidays: {}, events: [] } };
+const SCOPE_CLS = { 국세: "tax", 지방세: "local", "신청·안내": "apply" };
+
+function calFilters() {
+  const f = {};
+  document.querySelectorAll("#calFilters input").forEach((i) => (f[i.dataset.f] = i.checked));
+  return f;
+}
+
+function md(dateStr) {
+  const [, m, d] = dateStr.split("-");
+  return `${Number(m)}/${Number(d)}(${weekday(dateStr)})`;
+}
+
+function dday(dateStr) {
+  const t = new Date(todayStr());
+  const d = new Date(dateStr);
+  const n = Math.round((d - t) / 86400000);
+  return n === 0 ? "D-day" : n > 0 ? `D-${n}` : `D+${-n}`;
+}
+
+// 달력에 표시할 항목 (해당 연도 앞뒤 포함)
+function calItems() {
+  const extra = cal.data.extraHolidays;
+  const f = calFilters();
+  const items = [];
+  for (const y of [cal.year - 1, cal.year, cal.year + 1]) {
+    for (const ev of eventsForYear(y, extra)) {
+      if (!f[ev.scope]) continue;
+      if (ev.level < 2 && !f["참고"]) continue;
+      items.push({ date: ev.due, type: "due", ev });
+      if (ev.start) items.push({ date: ev.start, type: "start", ev });
+      if (f["글추천"]) for (const idea of postIdeas(ev, extra)) items.push({ date: idea.date, type: "idea", ev, idea });
+    }
+  }
+  if (f["내글"]) {
+    for (const p of posts) if (p.scheduledAt) items.push({ date: p.scheduledAt, type: "post", post: p });
+    for (const e of cal.data.events) items.push({ date: e.date, type: "custom", e });
+  }
+  return items;
+}
+
+function shortName(name) {
+  return name.replace(/\(.*?\)/g, "").replace(/부가가치세/g, "부가세").replace(/·?(확정신고|예정신고|신고·납부|신고납부|신고|납부|정기 신청|신청)/g, "").replace(/\s+/g, " ").trim();
+}
+
+function chipHtml(it) {
+  const cls = it.ev ? SCOPE_CLS[it.ev.scope] : "";
+  if (it.type === "due") return `<span class="ev ${it.ev.level < 2 ? "minor" : cls}" title="${escapeHtml(it.ev.name)}">${it.ev.kind === "info" ? "" : "마감 "}${escapeHtml(it.ev.name)}</span>`;
+  if (it.type === "start") return `<span class="ev start ${cls}" title="${escapeHtml(it.ev.name)} 시작">시작 ${escapeHtml(it.ev.name)}</span>`;
+  if (it.type === "idea") return `<span class="ev idea" title="${escapeHtml(it.idea.title)}">✎ ${escapeHtml(shortName(it.ev.name))} ${escapeHtml(it.idea.type)}</span>`;
+  if (it.type === "post") return `<span class="ev mine" title="${escapeHtml(it.post.title || it.post.topic)}">📝 ${escapeHtml(it.post.title || it.post.topic || "(제목 없음)")}</span>`;
+  return `<span class="ev mine" title="${escapeHtml(it.e.title)}">📌 ${escapeHtml(it.e.title)}</span>`;
+}
+
+function renderCalendar() {
+  const { year, month } = cal;
+  $("calTitle").textContent = `${year}년 ${month}월`;
+  const warn = $("calWarn");
+  if (!hasHolidayData(year)) {
+    warn.textContent = `${year}년 공휴일 자료가 앱에 없습니다. 토·일요일만 반영해 기한을 계산했으니, 설·추석 등 공휴일에 따른 연장 여부는 꼭 확인해 주세요. (휴일 추가로 직접 넣을 수 있습니다)`;
+    warn.classList.remove("hidden");
+  } else warn.classList.add("hidden");
+
+  const items = calItems();
+  const byDate = {};
+  for (const it of items) (byDate[it.date] ||= []).push(it);
+  const order = { due: 0, start: 1, custom: 2, post: 3, idea: 4 };
+
+  const first = new Date(year, month - 1, 1);
+  const startDate = new Date(year, month - 1, 1 - first.getDay());
+  const today = todayStr();
+  let html = ["일", "월", "화", "수", "목", "금", "토"].map((d, i) => `<div class="cal-dow ${i === 0 ? "sun" : i === 6 ? "sat" : ""}">${d}</div>`).join("");
+  for (let i = 0; i < 42; i++) {
+    const d = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + i);
+    if (i >= 35 && d.getMonth() !== month - 1) break;
+    const ds = ymd(d);
+    const hn = holidayName(ds, cal.data.extraHolidays);
+    const off = d.getDay() === 0 || Boolean(hn);
+    const list = (byDate[ds] || []).sort((a, b) => order[a.type] - order[b.type]);
+    const shown = list.slice(0, 4).map(chipHtml).join("");
+    html += `<div class="cal-cell ${d.getMonth() !== month - 1 ? "other" : ""} ${ds === today ? "today" : ""} ${ds === cal.sel ? "selected" : ""}" data-date="${ds}">
+      <div class="cal-num ${off ? "off" : ""}">${d.getDate()}${hn ? `<span class="hname">${escapeHtml(hn)}</span>` : ""}</div>
+      ${shown}${list.length > 4 ? `<div class="ev-more">+${list.length - 4}개 더</div>` : ""}
+    </div>`;
+  }
+  $("calGrid").innerHTML = html;
+  renderCalSide(items);
+  renderHolidayList();
+}
+
+function taxItemHtml(ev, idx) {
+  const ideas = postIdeas(ev, cal.data.extraHolidays);
+  const range = ev.start ? `${md(ev.start)} ~ ${md(ev.due)}` : `${md(ev.due)}${ev.kind === "info" ? "" : " 마감"}`;
+  const past = ev.due < todayStr();
+  return `<div class="side-item ${SCOPE_CLS[ev.scope]}">
+    <span class="dday ${past ? "past" : ""}">${dday(ev.due)}</span>
+    <b>${escapeHtml(ev.name)}</b>${ev.check ? '<span class="chk">확인 필요</span>' : ""}
+    <div class="meta">${ev.scope} · ${range}${ev.shifted ? ` <span title="기한이 쉬는 날이라 다음 날로 연장">(법정 ${md(ev.legal)} → 연장)</span>` : ""}</div>
+    <div class="meta">대상: ${escapeHtml(ev.who)}</div>
+    <div class="meta">근거: ${escapeHtml(ev.basis)}</div>
+    ${ideas.length ? `<div class="ideas">${ideas.map((i) => `✎ <b>${md(i.date)}</b> ${escapeHtml(i.type)} 글 — <span class="muted">${escapeHtml(i.why)}</span>`).join("<br>")}</div>` : ""}
+    <div class="actions">
+      <button data-cal-write="${idx}">이 주제로 쓰기</button>
+      ${ideas.map((i, k) => `<button class="ghost" data-cal-plan="${idx}:${k}">${md(i.date)} 발행 예정 등록</button>`).join("")}
+    </div>
+  </div>`;
+}
+
+let calSideEvents = [];
+
+function renderCalSide(items) {
+  const { year, month } = cal;
+  const prefix = `${year}-${String(month).padStart(2, "0")}`;
+  let list;
+  if (cal.sel) {
+    $("sideTitle").textContent = `${md(cal.sel)} 일정`;
+    list = items.filter((it) => it.date === cal.sel);
+  } else {
+    $("sideTitle").textContent = `${month}월 일정과 글 추천`;
+    list = items.filter((it) => it.date.startsWith(prefix));
+  }
+  // 세무 일정(마감 기준 한 번씩) + 그 일정으로 이어지는 글 추천
+  const evs = [];
+  const seen = new Set();
+  for (const it of list) {
+    if (!it.ev || seen.has(it.ev.key)) continue;
+    if (!cal.sel && it.type !== "due" && !(it.type === "idea" || it.type === "start")) continue;
+    seen.add(it.ev.key);
+    evs.push(it.ev);
+  }
+  evs.sort((a, b) => a.due.localeCompare(b.due));
+  calSideEvents = evs;
+  let html = evs.map((ev, i) => taxItemHtml(ev, i)).join("");
+  for (const it of list.filter((x) => x.type === "post")) {
+    html += `<div class="side-item mine"><b>📝 ${escapeHtml(it.post.title || it.post.topic || "(제목 없음)")}</b>
+      <div class="meta">${md(it.date)} 발행 예정 · ${STATUS_LABEL[it.post.status]}</div>
+      <div class="actions"><button data-open-post="${it.post.id}">글 열기</button></div></div>`;
+  }
+  for (const it of list.filter((x) => x.type === "custom")) {
+    html += `<div class="side-item mine"><b>📌 ${escapeHtml(it.e.title)}</b><div class="meta">${md(it.date)}</div>
+      <div class="actions"><button class="ghost danger" data-del-ev="${it.e.id}">삭제</button></div></div>`;
+  }
+  $("sideList").innerHTML = html || '<p class="muted">표시할 일정이 없습니다.</p>';
+  if (cal.sel) $("sideList").insertAdjacentHTML("afterbegin", '<button class="ghost small" id="calShowMonth">← 이번 달 전체 보기</button>');
+}
+
+function renderHolidayList() {
+  const entries = Object.entries(cal.data.extraHolidays).sort();
+  $("holList").innerHTML = entries.length
+    ? entries.map(([d, n]) => `<div>${d} ${escapeHtml(n)} <button class="ghost danger small" data-del-hol="${d}">삭제</button></div>`).join("")
+    : "";
+}
+
+async function loadCalendar() {
+  try {
+    const [data, list] = await Promise.all([api("/api/calendar"), api("/api/posts")]);
+    cal.data = data;
+    posts = list;
+  } catch (e) {
+    toast(e.message, 3500);
+  }
+  renderCalendar();
+}
+
+function calWrite(ev) {
+  if (!confirmDiscard()) return;
+  fillForm(null);
+  const [y, m, d] = ev.due.split("-").map(Number);
+  $("topic").value = `${ev.topic} (${y}년 ${m}월 ${d}일 ${ev.kind === "info" ? "" : "기한"})`.replace(" )", ")");
+  $("memo").value = [
+    `일정: ${ev.name}`,
+    ev.start ? `기간: ${ev.start} ~ ${ev.due}` : `기한: ${ev.due}(${weekday(ev.due)})`,
+    ev.shifted ? `법정 기한 ${ev.legal}(${weekday(ev.legal)})이 쉬는 날이라 ${ev.due}(${weekday(ev.due)})로 연장됨 — 반드시 글에 정확히 표시` : "",
+    `대상: ${ev.who}`,
+    `근거: ${ev.basis}`,
+    "기한·대상·근거는 최신 자료로 다시 확인하고, 불확실하면 [확인 필요]로 표시",
+  ].filter(Boolean).join("\n");
+  const tpl = templates.find((t) => t.id === "tpl-deadline");
+  if (tpl) $("templateSelect").value = tpl.id;
+  showView("write");
+  $("topic").scrollIntoView({ behavior: "smooth", block: "center" });
+  toast("주제와 메모를 채웠습니다. '신고기한 안내' 템플릿을 골라 두었습니다.", 3500);
+}
+
+async function calPlan(ev, idea) {
+  const dup = posts.find((p) => p.scheduledAt === idea.date && p.topic.includes(ev.topic));
+  if (dup && !confirm("같은 날짜에 같은 주제의 예정 글이 이미 있습니다. 그래도 등록할까요?")) return;
+  if (!confirm(`${md(idea.date)}에 '${idea.title}' 글을 발행 예정으로 등록할까요?\n(글 목록에 빈 초안이 만들어집니다)`)) return;
+  try {
+    await api("/api/posts", { method: "POST", body: { title: idea.title, topic: ev.topic, content: "", status: "scheduled", scheduledAt: idea.date, tags: [] } });
+    toast("발행 예정으로 등록했습니다. 글 목록에서 열어 작성할 수 있습니다.", 3500);
+    loadCalendar();
+  } catch (e) {
+    toast(e.message, 3500);
+  }
+}
+
+$("calPrev").onclick = () => { cal.month--; if (cal.month < 1) { cal.month = 12; cal.year--; } cal.sel = null; renderCalendar(); };
+$("calNext").onclick = () => { cal.month++; if (cal.month > 12) { cal.month = 1; cal.year++; } cal.sel = null; renderCalendar(); };
+$("calToday").onclick = () => { const d = new Date(); cal.year = d.getFullYear(); cal.month = d.getMonth() + 1; cal.sel = todayStr(); renderCalendar(); };
+$("calFilters").onchange = renderCalendar;
+$("calGrid").onclick = (e) => {
+  const cell = e.target.closest("[data-date]");
+  if (!cell) return;
+  cal.sel = cal.sel === cell.dataset.date ? null : cell.dataset.date;
+  renderCalendar();
+  if (window.innerWidth < 1000) $("sideTitle").scrollIntoView({ behavior: "smooth" });
+};
+$("sideList").onclick = async (e) => {
+  if (e.target.id === "calShowMonth") { cal.sel = null; return renderCalendar(); }
+  const w = e.target.closest("[data-cal-write]");
+  if (w) return calWrite(calSideEvents[Number(w.dataset.calWrite)]);
+  const pl = e.target.closest("[data-cal-plan]");
+  if (pl) {
+    const [i, k] = pl.dataset.calPlan.split(":").map(Number);
+    const ev = calSideEvents[i];
+    return calPlan(ev, postIdeas(ev, cal.data.extraHolidays)[k]);
+  }
+  const op = e.target.closest("[data-open-post]");
+  if (op) return openPost(op.dataset.openPost);
+  const de = e.target.closest("[data-del-ev]");
+  if (de && confirm("이 일정을 삭제할까요?")) {
+    cal.data = await api(`/api/calendar/events/${de.dataset.delEv}`, { method: "DELETE" });
+    renderCalendar();
+  }
+};
+$("btnEvAdd").onclick = async () => {
+  try {
+    cal.data = await api("/api/calendar/events", { method: "POST", body: { date: $("evDate").value, title: $("evTitle").value } });
+    $("evTitle").value = "";
+    renderCalendar();
+    toast("일정을 추가했습니다.");
+  } catch (e) { toast(e.message, 3500); }
+};
+$("btnHolAdd").onclick = async () => {
+  if (!$("holDate").value) return toast("날짜를 골라 주세요.");
+  try {
+    cal.data = await api("/api/calendar/holidays", { method: "POST", body: { date: $("holDate").value, name: $("holName").value || "임시공휴일" } });
+    $("holName").value = "";
+    renderCalendar();
+    toast("휴일을 추가했습니다. 기한 연장 계산에 반영됩니다.");
+  } catch (e) { toast(e.message, 3500); }
+};
+$("holList").onclick = async (e) => {
+  const b = e.target.closest("[data-del-hol]");
+  if (b && confirm("이 휴일을 삭제할까요?")) {
+    cal.data = await api(`/api/calendar/holidays/${b.dataset.delHol}`, { method: "DELETE" });
+    renderCalendar();
+  }
+};
+
 // ───────────── 화면 전환·연결 ─────────────
 
 function showView(name) {
@@ -1063,6 +1318,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
   if (name === "list") loadPosts();
   if (name === "samples") loadSamples();
+  if (name === "calendar") loadCalendar();
 }
 
 document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => showView(t.dataset.view)));

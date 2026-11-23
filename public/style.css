@@ -39,10 +39,11 @@ mark { background: var(--warn); color: inherit; padding: 0 2px; border-radius: 3
   padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .brand { font-weight: 700; }
-.tabs { display: flex; gap: 4px; flex: 1; }
+.tabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
 .tab { white-space: nowrap; border: 0; background: none; padding: 8px 14px; border-radius: 8px; color: var(--muted); font-weight: 600; }
 .tab.active { background: var(--accent-soft); color: var(--accent); }
-@media (max-width: 600px) { .topbar { gap: 8px; padding: 10px 12px; } .brand { flex-basis: 100%; } .tab { padding: 7px 10px; } }
+@media (max-width: 600px) { .topbar { gap: 8px; padding: 10px 12px; } .brand { flex-basis: 100%; } .tabs { flex-basis: 100%; } .tab { padding: 7px 10px; } .badge { order: 4; } }
 .badge { white-space: nowrap; font-size: 12px; padding: 4px 10px; border-radius: 99px; background: var(--line); color: var(--muted); }
 .badge.ok { background: var(--accent-soft); color: var(--accent); }
 .badge.off { background: var(--warn); color: var(--ink); }
@@ -51,6 +52,8 @@ mark { background: var(--warn); color: inherit; padding: 0 2px; border-radius: 3
 .view.active { display: grid; }
 #view-write { grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px; align-items: start; }
 #view-list, #view-templates, #view-samples { padding: 16px; }
+#view-calendar { grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; align-items: start; }
+@media (max-width: 1000px) { #view-calendar { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { #view-write { grid-template-columns: 1fr; } }
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
@@ -223,3 +226,55 @@ body.mode-copy .api-only { display: none !important; }
 .fix-changes ul { margin: 6px 0 0; padding-left: 18px; }
 .fix-changes li { margin: 3px 0; }
 .fix-changes .skip { color: var(--muted); }
+
+/* 세무달력 */
+:root { --c-tax: #d64545; --c-local: #d9822b; --c-apply: #7b5cd6; --c-idea: #03a94d; --c-mine: #3b6fd6; }
+.cal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.cal-nav { display: flex; align-items: center; gap: 6px; }
+.cal-nav h2 { margin: 0 6px; min-width: 120px; text-align: center; }
+.cal-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+.fchip { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: 12px; font-weight: 500; padding: 4px 8px; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; }
+.fchip input { width: auto; margin: 0; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot.tax { background: var(--c-tax); } .dot.local { background: var(--c-local); } .dot.apply { background: var(--c-apply); } .dot.idea { background: var(--c-idea); } .dot.mine { background: var(--c-mine); }
+.cal-warn { background: var(--warn); padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.cal-dow { font-size: 12px; font-weight: 700; text-align: center; padding: 6px 0; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--bg); }
+.cal-dow.sun { color: var(--c-tax); } .cal-dow.sat { color: var(--c-mine); }
+.cal-cell { min-height: 108px; padding: 4px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); cursor: pointer; overflow: hidden; }
+.cal-cell:hover { background: var(--bg); }
+.cal-cell.other { opacity: .4; }
+.cal-cell.today { box-shadow: inset 0 0 0 2px var(--accent); }
+.cal-cell.selected { background: var(--accent-soft); }
+.cal-num { font-size: 13px; font-weight: 700; display: flex; gap: 4px; align-items: baseline; }
+.cal-num.off { color: var(--c-tax); }
+.cal-num .hname { font-size: 10px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev { display: block; font-size: 11px; line-height: 1.35; padding: 1px 4px; margin-top: 2px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff; }
+.ev.tax { background: var(--c-tax); } .ev.local { background: var(--c-local); } .ev.apply { background: var(--c-apply); }
+.ev.start { background: transparent !important; border: 1px dashed currentColor; }
+.ev.start.tax { color: var(--c-tax); } .ev.start.local { color: var(--c-local); } .ev.start.apply { color: var(--c-apply); }
+.ev.idea { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.ev.mine { background: transparent; color: var(--c-mine); border: 1px solid var(--c-mine); }
+.ev.minor { background: var(--line); color: var(--ink); }
+.ev-more { font-size: 10px; color: var(--muted); }
+@media (max-width: 700px) {
+  .cal-cell { min-height: 64px; padding: 2px; }
+  .ev { font-size: 0; height: 6px; padding: 0; margin-top: 2px; }
+  .cal-num .hname { display: none; }
+}
+.cal-side { position: sticky; top: 70px; max-height: calc(100vh - 90px); overflow: auto; }
+@media (max-width: 1000px) { .cal-side { position: static; max-height: none; } }
+.side-list { display: grid; gap: 10px; }
+.side-item { border: 1px solid var(--line); border-left-width: 4px; border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.side-item.tax { border-left-color: var(--c-tax); } .side-item.local { border-left-color: var(--c-local); } .side-item.apply { border-left-color: var(--c-apply); } .side-item.idea { border-left-color: var(--c-idea); } .side-item.mine { border-left-color: var(--c-mine); }
+.side-item b { font-size: 14px; }
+.side-item .meta { color: var(--muted); margin: 3px 0; }
+.side-item .dday { float: right; font-weight: 800; color: var(--c-tax); }
+.side-item .dday.past { color: var(--muted); }
+.side-item .chk { display: inline-block; font-size: 11px; background: var(--warn); padding: 0 6px; border-radius: 99px; margin-left: 4px; }
+.side-item .ideas { margin: 6px 0 0; padding: 6px 8px; background: var(--accent-soft); border-radius: 6px; }
+.side-item .actions { margin-top: 8px; }
+.side-item .actions button { padding: 4px 10px; font-size: 12px; }
+.cal-settings { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cal-settings summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.cal-settings input { margin-bottom: 6px; }

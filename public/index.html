@@ -12,6 +12,7 @@
     <div class="brand">블로그 글 작성 도우미</div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="write" role="tab">글쓰기</button>
+      <button class="tab" data-view="calendar" role="tab">세무달력</button>
       <button class="tab" data-view="list" role="tab">글 목록·예약</button>
       <button class="tab" data-view="templates" role="tab">템플릿</button>
       <button class="tab" data-view="samples" role="tab">내 글 학습</button>
@@ -187,6 +188,52 @@
         </ol>
       </div>
     </section>
+  </main>
+
+  <!-- ───────── 세무달력 ───────── -->
+  <main id="view-calendar" class="view">
+    <section class="panel cal-panel">
+      <div class="cal-head">
+        <div class="cal-nav">
+          <button id="calPrev" class="ghost" aria-label="이전 달">◀</button>
+          <h2 id="calTitle">2026년 11월</h2>
+          <button id="calNext" class="ghost" aria-label="다음 달">▶</button>
+          <button id="calToday" class="ghost small">오늘</button>
+        </div>
+        <div class="cal-filters" id="calFilters">
+          <label class="fchip"><input type="checkbox" data-f="국세" checked> <i class="dot tax"></i>국세</label>
+          <label class="fchip"><input type="checkbox" data-f="지방세" checked> <i class="dot local"></i>지방세</label>
+          <label class="fchip"><input type="checkbox" data-f="신청·안내" checked> <i class="dot apply"></i>신청·안내</label>
+          <label class="fchip"><input type="checkbox" data-f="글추천" checked> <i class="dot idea"></i>글 추천일</label>
+          <label class="fchip"><input type="checkbox" data-f="내글" checked> <i class="dot mine"></i>내 글·일정</label>
+          <label class="fchip"><input type="checkbox" data-f="참고"> 참고 일정(원천세 등)</label>
+        </div>
+      </div>
+      <p id="calWarn" class="cal-warn hidden"></p>
+      <div class="cal-grid" id="calGrid"></div>
+      <p class="muted small">기한이 토·일·공휴일·노동절이면 다음 날로 연장된 날짜로 표시합니다(국세기본법 제5조, 지방세기본법 제24조). 법정 기한과 다르면 옆에 함께 적습니다.
+        일정과 공휴일은 매년 바뀔 수 있으니 <a href="https://www.nts.go.kr" target="_blank" rel="noopener">국세청 세무일정</a>·위택스에서 꼭 확인해 주세요.</p>
+    </section>
+
+    <aside class="panel cal-side">
+      <h3 id="sideTitle">이번 달 일정</h3>
+      <div id="sideList" class="side-list"></div>
+
+      <details class="cal-settings">
+        <summary>내 일정 추가</summary>
+        <input id="evDate" type="date" />
+        <input id="evTitle" placeholder="일정 이름 (예: ○○ 거래처 법인세 자료 마감)" />
+        <button id="btnEvAdd" class="primary small">추가</button>
+      </details>
+      <details class="cal-settings">
+        <summary>휴일 추가 (임시공휴일·선거일 등)</summary>
+        <p class="muted small">정부가 임시공휴일을 지정하면 여기에 추가해 주세요. 기한 연장 계산에 반영됩니다.</p>
+        <input id="holDate" type="date" />
+        <input id="holName" placeholder="이름 (예: 임시공휴일)" />
+        <button id="btnHolAdd" class="primary small">추가</button>
+        <div id="holList" class="small"></div>
+      </details>
+    </aside>
   </main>
 
   <!-- ───────── 글 목록 ───────── -->
