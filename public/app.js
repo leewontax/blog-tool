@@ -1738,8 +1738,8 @@ function calWrite(ev) {
     ev.start ? `기간: ${ev.start} ~ ${ev.due}` : `기한: ${ev.due}(${weekday(ev.due)})`,
     ev.shifted ? `법정 기한 ${ev.legal}(${weekday(ev.legal)})이 쉬는 날이라 ${ev.due}(${weekday(ev.due)})로 연장됨 — 반드시 글에 정확히 표시` : "",
     `대상: ${ev.who}`,
-    `근거: ${ev.basis}`,
-    "기한·대상·근거는 최신 자료로 다시 확인하고, 불확실하면 [확인 필요]로 표시",
+    `참고 근거(확인용 — 본문에 법령명·조문은 쓰지 말 것): ${ev.basis}`,
+    "기한·대상은 최신 자료로 다시 확인하고, 불확실하면 [확인 필요]로 표시",
   ].filter(Boolean).join("\n");
   const tpl = templates.find((t) => t.id === "tpl-deadline");
   if (tpl) $("templateSelect").value = tpl.id;
