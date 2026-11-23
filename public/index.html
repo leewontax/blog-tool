@@ -144,9 +144,73 @@
         <button id="btnNew" class="ghost">새 글</button>
       </div>
 
+      <div class="imagebox">
+        <h3>3. 이미지 만들기</h3>
+
+        <div class="img-section">
+          <div class="list-head"><h4>본문 이미지 (claude.ai · 도표형)</h4><span id="bodyImgCount" class="muted small"></span></div>
+          <p class="small muted">요약 카드·일정표·비교표·체크리스트처럼 글 내용을 정리한 이미지를 만듭니다. 본문에 있는 내용·숫자만 씁니다.</p>
+          <ol class="steps small">
+            <li>
+              <select id="bodyImgN" class="inline-select"><option value="2">2개</option><option value="3" selected>3개</option><option value="4">4개</option></select>
+              <button id="btnBodyImgCopy">본문 이미지 요청문 복사 → claude.ai 열기</button>
+            </li>
+            <li>claude.ai 답변 아래 <b>복사</b> → 아래 칸에 붙여넣고 <b>적용</b>
+              <span class="muted">(코드가 오른쪽 별도 창에 나오면 "답변 안에 코드로 다시 써 줘"라고 요청하세요)</span></li>
+          </ol>
+          <textarea id="bodyImgPaste" rows="3" placeholder="===이미지 1=== ... ```svg <svg ...> ```"></textarea>
+          <button id="btnBodyImgApply" class="primary small">적용 → 이미지 만들기</button>
+          <div id="bodyImgList" class="img-grid"></div>
+        </div>
+
+        <div class="img-section">
+          <h4>대표 이미지 (ChatGPT 그림 + 제목 글자)</h4>
+          <p class="small muted">ChatGPT가 그린 배경 그림 위에 앱이 제목을 정확하게 얹습니다(글자 오탈자 방지). 그림 없이 기본 배경으로도 만들 수 있습니다.</p>
+          <ol class="steps small">
+            <li>
+              <label class="check inline"><input type="checkbox" id="thumbWithText" /> ChatGPT가 글자까지 넣기 <span class="muted">(한글 오탈자가 생길 수 있어 비추천)</span></label>
+              <button id="btnThumbCopy">대표 이미지 요청문 복사 → ChatGPT 열기</button>
+            </li>
+            <li>ChatGPT 그림을 <b>내려받아</b> 아래 상자에 끌어다 놓거나, 그림을 복사해 상자를 누르고 <b>Ctrl+V</b></li>
+          </ol>
+          <div class="thumb-wrap">
+            <div id="thumbDrop" class="thumb-drop" tabindex="0" title="그림을 끌어다 놓거나, 누른 뒤 Ctrl+V">
+              <canvas id="thumbCanvas" width="1080" height="1080"></canvas>
+            </div>
+            <div class="thumb-ctrl">
+              <label class="small">대표 이미지 제목 <span class="muted">(Enter로 줄바꿈)</span>
+                <textarea id="thumbTitle" rows="3" placeholder="비워 두면 글 제목 사용"></textarea>
+              </label>
+              <p id="thumbWarn" class="review-stale hidden">⚠ 제목이 길어 일부가 잘립니다. 위 칸에 짧게 줄여 적어 주세요.</p>
+              <label class="small">작은 글씨 (선택)
+                <input id="thumbSub" placeholder="예: 2026년 귀속 · 신고기한 총정리" />
+              </label>
+              <label class="small">사무소명 (선택)
+                <input id="thumbOffice" placeholder="예: ○○세무회계" />
+              </label>
+              <label class="small">글자 배치
+                <select id="thumbPreset">
+                  <option value="bottom">아래쪽 띠</option>
+                  <option value="center">가운데 상자</option>
+                  <option value="top">위쪽 띠</option>
+                </select>
+              </label>
+              <div class="actions">
+                <label class="button ghost small">그림 파일 선택<input id="thumbFile" type="file" accept="image/png,image/jpeg,image/webp" hidden /></label>
+                <button id="btnThumbClearBg" class="ghost small">기본 배경</button>
+              </div>
+              <div class="actions">
+                <button id="btnThumbSave" class="primary small">PNG 저장 (2160px)</button>
+                <button id="btnThumbCopyImg" class="ghost small">이미지 복사</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="reviewbox">
         <div class="list-head">
-          <h3>3. 2차 검증 (ChatGPT)</h3>
+          <h3>4. 2차 검증 (ChatGPT)</h3>
           <span id="reviewBadge" class="pill draft">검증 안 함</span>
         </div>
         <p class="small muted">다른 AI(ChatGPT)가 세율·한도·기한·조문, [확인 필요] 부분, 광고 표현, 개인정보를 다시 확인합니다. 추가 비용은 없습니다.</p>
@@ -180,12 +244,14 @@
       </div>
 
       <div class="copybox">
-        <h3>4. 네이버에 붙여넣기</h3>
+        <h3>5. 네이버에 붙여넣기</h3>
         <ol class="steps">
           <li><button id="btnOpenNaver" class="naver">네이버 글쓰기 창 열기</button></li>
           <li><button id="btnCopyTitle">제목 복사</button> → 네이버 제목 칸에 붙여넣기(Ctrl+V)</li>
           <li><button id="btnCopyBody">본문 복사(서식 포함)</button> → 본문 칸에 붙여넣기</li>
           <li><button id="btnCopyTags">태그 복사</button> → 태그 칸에 붙여넣기</li>
+          <li>본문의 노란 <b>[이미지 N 자리]</b>마다: 위 <b>본문 이미지</b>의 <b>이미지 복사</b> → 그 자리에 붙여넣고 안내 줄 지우기</li>
+          <li><b>대표 이미지</b>: PNG 저장 후 네이버에서 사진 올리기 → 대표 사진으로 지정</li>
           <li>발행 후 글 주소를 위 <b>네이버 글 주소</b>에 넣고 상태를 <b>발행 완료</b>로 저장</li>
         </ol>
       </div>

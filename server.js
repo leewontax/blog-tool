@@ -197,12 +197,12 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readBody(req) {
+async function readBody(req, limit = 3_000_000) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > 2_000_000) throw Object.assign(new Error("요청이 너무 큽니다."), { status: 413 });
+    if (size > limit) throw Object.assign(new Error("요청이 너무 큽니다."), { status: 413 });
     chunks.push(chunk);
   }
   const raw = Buffer.concat(chunks).toString("utf8");
@@ -340,6 +340,34 @@ function cleanReview(r) {
   };
 }
 
+// 본문 이미지(SVG) — 스크립트·외부 링크 등 위험한 요소는 저장하지 않음
+function safeSvg(svg) {
+  const t = String(svg || "").trim();
+  if (!/^<svg[\s>]/i.test(t) || !/<\/svg>\s*$/i.test(t)) return null;
+  if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:|(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i.test(t)) return null;
+  return t.length <= 300_000 ? t : null;
+}
+
+function cleanImages(list) {
+  if (!Array.isArray(list)) return [];
+  return list
+    .map((im) => ({ n: Number(im?.n) || 0, place: String(im?.place || "").slice(0, 100), alt: String(im?.alt || "").slice(0, 200), svg: safeSvg(im?.svg) }))
+    .filter((im) => im.n > 0 && im.svg)
+    .slice(0, 8);
+}
+
+const THUMB_PRESETS = ["bottom", "center", "top"];
+function cleanThumb(t) {
+  if (!t || typeof t !== "object") return null;
+  return {
+    title: String(t.title || "").slice(0, 120),
+    sub: String(t.sub || "").slice(0, 80),
+    office: String(t.office || "").slice(0, 40),
+    preset: THUMB_PRESETS.includes(t.preset) ? t.preset : "bottom",
+    bgFile: /^[\w-]+-bg\.(png|jpg|webp)$/.test(t.bgFile || "") ? t.bgFile : "",
+  };
+}
+
 function cleanPost(input, existing = {}) {
   const now = new Date().toISOString();
   return {
@@ -352,6 +380,8 @@ function cleanPost(input, existing = {}) {
     scheduledAt: input.scheduledAt ?? existing.scheduledAt ?? "",
     naverUrl: String(input.naverUrl ?? existing.naverUrl ?? "").slice(0, 500),
     review: cleanReview(input.review !== undefined ? input.review : existing.review),
+    images: cleanImages(input.images !== undefined ? input.images : existing.images),
+    thumb: cleanThumb(input.thumb !== undefined ? input.thumb : existing.thumb),
     createdAt: existing.createdAt || now,
     updatedAt: now,
   };
@@ -377,7 +407,30 @@ async function snapshotPost(prev, next) {
   await writeStore(name, list.slice(-HISTORY_KEEP));
 }
 
+const IMAGE_DIR = path.join(DATA_DIR, "images");
+const IMAGE_TYPES = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" };
+
 async function handlePosts(req, res, id, sub) {
+  if (sub === "thumbbg") {
+    if (req.method !== "PUT") return sendJson(res, 405, { error: "지원하지 않는 요청" });
+    const posts = await readStore("posts", []);
+    const idx = posts.findIndex((p) => p.id === id);
+    if (idx < 0) return sendJson(res, 404, { error: "먼저 글을 저장해 주세요." });
+    const b = await readBody(req, 25_000_000);
+    const m = String(b.dataUrl || "").match(/^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return sendJson(res, 400, { error: "PNG·JPG·WEBP 이미지만 넣을 수 있습니다." });
+    const buf = Buffer.from(m[2], "base64");
+    if (buf.length > 15_000_000) return sendJson(res, 400, { error: "이미지가 너무 큽니다(15MB 이하)." });
+    await fs.mkdir(IMAGE_DIR, { recursive: true });
+    // 예전 배경 파일 정리
+    for (const ext of Object.values(IMAGE_TYPES)) await fs.rm(path.join(IMAGE_DIR, `${id}-bg.${ext}`), { force: true });
+    const file = `${id}-bg.${IMAGE_TYPES[m[1]]}`;
+    await fs.writeFile(path.join(IMAGE_DIR, file), buf);
+    posts[idx].thumb = { ...(cleanThumb(posts[idx].thumb) || cleanThumb({})), bgFile: file };
+    posts[idx].updatedAt = new Date().toISOString();
+    await writeStore("posts", posts);
+    return sendJson(res, 200, { bgFile: file });
+  }
   if (sub === "history") {
     if (req.method !== "GET") return sendJson(res, 405, { error: "지원하지 않는 요청" });
     const list = await readStore(`history/${id}`, []);
@@ -995,6 +1048,72 @@ ${String(body.reviewText || "")}`);
   return parts.join("\n\n");
 }
 
+// 본문 이미지 요청문 (claude.ai) — 도표형 이미지를 SVG 코드로 받기
+function buildBodyImagesRequest(body) {
+  const count = Math.max(1, Math.min(4, Number(body.count) || 3));
+  return `아래 네이버 블로그 글(세무사 블로그)의 본문에 넣을 도표형 이미지 ${count}개를 SVG 코드로 만들어 주세요.
+
+[중요: 답변 방식]
+- 아티팩트(별도 창)를 쓰지 말고, 답변 본문 안의 코드 블록으로 SVG 코드를 그대로 써 주세요. 저는 답변 전체를 복사해서 프로그램에 붙여넣습니다.
+
+[어떤 이미지를 만들지]
+- 글 내용을 한눈에 이해하도록 돕는 이미지를 고르세요. 예: 핵심 요약 카드, 신고·납부 일정표, 대상/비대상 비교표, 준비서류 체크리스트, 계산 흐름(산식) 그림
+- 각 이미지는 본문의 한 소제목 내용을 담고, 그 소제목 바로 아래에 넣을 것입니다.
+
+[정확성 — 반드시 지킬 것]
+- 본문에 있는 내용·숫자·날짜만 쓰세요. 새로운 수치나 내용을 만들지 마세요.
+- 본문에서 [확인 필요]로 표시된 수치는 이미지에 넣지 마세요.
+- 맞춤법을 지키고, 글자를 생략하거나 줄이지 마세요.
+- 실명·연락처 등 개인정보, 광고 문구는 넣지 마세요.
+
+[SVG 규칙]
+- <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="(600~1500 사이)" viewBox="0 0 1200 (같은 높이)"> 로 시작
+- 맨 처음에 흰색 배경 사각형을 깔아 주세요.
+- 글꼴: font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif"
+- 글자 크기: 제목 44~52, 본문 최소 28 (작은 글씨 금지). 한 줄은 한글 26자 이내로 직접 줄바꿈(<tspan> 또는 여러 <text>)하고, 글자가 상자 밖으로 넘치지 않게 여백을 넉넉히 두세요.
+- 색: 주색 #03a94d, 진한 글자 #1d2320, 연한 배경 #e6f6ec, 회색 #6b746f, 강조 빨강 #d64545 (주의·마감 표시에만)
+- 사용 금지: <script>, <foreignObject>, 외부 이미지·링크, 이모지, 그림자 효과 과다 사용
+- 단정하고 전문적인 느낌, 인쇄해도 또렷하게
+
+[답변 형식] 이미지마다 아래 형식으로, 구분선을 지우지 말고 써 주세요.
+
+===이미지 1===
+위치: (이미지를 넣을 본문 소제목을 ## 없이 그대로)
+설명: (이미지 내용 한 줄)
+\`\`\`svg
+<svg ...>...</svg>
+\`\`\`
+
+──────── 블로그 글 ────────
+제목: ${body.title || "(제목 없음)"}
+
+${String(body.content || "")}`;
+}
+
+// 대표 이미지 요청문 (ChatGPT 이미지 생성)
+function buildThumbRequest(body) {
+  const withText = body.withText === true;
+  const title = String(body.title || body.topic || "").trim();
+  return `네이버 블로그 대표 이미지(썸네일)를 만들어 주세요. 이미지 생성 기능으로 그림 한 장을 만들어 주세요.
+
+[글 정보]
+- 블로그 성격: 대한민국 세무사가 운영하는 세금 정보 블로그
+- 글 제목: ${title || "(제목 없음)"}
+${body.topic && body.topic !== title ? `- 주제: ${body.topic}
+` : ""}
+[그림 조건]
+- 정사각형(1:1), 고해상도
+- 깔끔하고 신뢰감 있는 전문가 블로그 느낌. 과장되거나 유치한 느낌은 피해 주세요.
+- 색감: 초록(#03a94d) 계열을 중심으로 흰색·짙은 남색을 곁들인 밝고 단정한 색
+- 글 주제와 어울리는 소재를 단순하게 표현 (예: 서류, 계산기, 달력, 집·토지, 동전, 체크리스트 등 주제에 맞게)
+- 실존 인물·유명인 얼굴, 회사 로고·상표, 워터마크는 넣지 마세요.
+${withText
+  ? `- 그림 아래쪽에 다음 글자를 크고 또렷하게 넣어 주세요(맞춤법 그대로, 글자 하나도 바꾸지 말 것): "${title}"
+- 한글이 깨지거나 틀리면 다시 만들어 주세요.`
+  : `- 그림 안에 글자·숫자·기호를 절대 넣지 마세요. (제목 글자는 제가 따로 얹습니다)
+- 아래쪽 3분의 1은 제목 글자를 얹을 수 있도록 단순한 배경(복잡한 무늬 없이)으로 비워 주세요.`}`;
+}
+
 async function buildTopicsRequest() {
   const { region } = await readStore("settings", { region: "안성시" });
   const old = await readStore("topics", null);
@@ -1088,6 +1207,12 @@ async function handlePromptRequest(req, res, kind) {
     if (!text) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
   } else if (kind === "topics") {
     text = await buildTopicsRequest();
+  } else if (kind === "bodyimages") {
+    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문을 먼저 완성해 주세요." });
+    text = buildBodyImagesRequest(body);
+  } else if (kind === "thumb") {
+    if (!String(body.title || body.topic || "").trim()) return sendJson(res, 400, { error: "제목을 먼저 입력해 주세요." });
+    text = buildThumbRequest(body);
   } else if (kind === "fix") {
     if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문이 없습니다." });
     if (!String(body.reviewText || "").trim()) return sendJson(res, 400, { error: "먼저 2차 검증 결과를 저장해 주세요." });
@@ -1259,12 +1384,23 @@ const server = http.createServer(async (req, res) => {
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
     const calMatch = pathname.match(/^\/api\/calendar(?:\/(holidays|events)(?:\/([\w-]+))?)?$/);
     if (calMatch) return await handleCalendar(req, res, calMatch[1], calMatch[2]);
-    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix)$/);
+    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix|bodyimages|thumb)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
     if (pathname === "/api/style") return await handleStyle(req, res);
-    const postMatch = pathname.match(/^\/api\/posts(?:\/([\w-]+)(?:\/(history))?)?$/);
+    const imgMatch = pathname.match(/^\/api\/images\/([\w-]+-bg\.(?:png|jpg|webp))$/);
+    if (imgMatch && req.method === "GET") {
+      try {
+        const data = await fs.readFile(path.join(IMAGE_DIR, imgMatch[1]));
+        const ext = imgMatch[1].split(".").pop();
+        res.writeHead(200, { "Content-Type": { png: "image/png", jpg: "image/jpeg", webp: "image/webp" }[ext], "Cache-Control": "no-cache" });
+        return res.end(data);
+      } catch {
+        return sendJson(res, 404, { error: "이미지가 없습니다." });
+      }
+    }
+    const postMatch = pathname.match(/^\/api\/posts(?:\/([\w-]+)(?:\/(history|thumbbg))?)?$/);
     if (postMatch) return await handlePosts(req, res, postMatch[1], postMatch[2]);
     const tplMatch = pathname.match(/^\/api\/templates(?:\/([\w-]+))?$/);
     if (tplMatch) return await handleTemplates(req, res, tplMatch[1]);

@@ -82,6 +82,18 @@ function markdownToHtml(md, forCopy = false) {
     let m;
     if ((m = line.match(/^###\s+(.*)/))) { out.push(`<h3${st("h3")}>${inline(m[1], forCopy)}</h3>`); i++; continue; }
     if ((m = line.match(/^#{1,2}\s+(.*)/))) { out.push(`<h2${st("h2")}>${inline(m[1], forCopy)}</h2>`); i++; continue; }
+    if ((m = line.match(/^\s*\[이미지\s*(\d+)(?:\s*[:：]\s*(.*?))?\]\s*$/))) {
+      const n = Number(m[1]);
+      const alt = m[2] || "";
+      if (forCopy) {
+        out.push(`<p style="background:#fff1b8;padding:6px 10px;font-size:15px;"><b>📷 [이미지 ${n} 자리]</b> 여기에 '이미지 ${n}'을 붙여넣고 이 줄은 지우세요${alt ? ` (${escapeHtml(alt)})` : ""}</p>`);
+      } else {
+        const im = currentImages.find((x) => x.n === n);
+        out.push(`<div class="img-slot">${im ? `<img src="${svgUrl(im.svg)}" alt="${escapeHtml(alt)}">` : ""}📷 이미지 ${n} 자리${alt ? ` — ${escapeHtml(alt)}` : ""}${im ? "" : " (이미지 없음)"}</div>`);
+      }
+      i++;
+      continue;
+    }
     if (/^\s*\|.*\|\s*$/.test(line)) {
       const rows = [];
       while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
@@ -107,7 +119,7 @@ function markdownToHtml(md, forCopy = false) {
     }
     // 일반 문단: 빈 줄이 나올 때까지 묶기
     const para = [];
-    while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|\s*[-*]\s|\s*\d+[.)]\s|\s*\|)/.test(lines[i])) para.push(lines[i++]);
+    while (i < lines.length && lines[i].trim() && !/^(#{1,3}\s|\s*[-*]\s|\s*\d+[.)]\s|\s*\||\s*\[이미지\s*\d+)/.test(lines[i])) para.push(lines[i++]);
     out.push(`<p${st("p")}>${para.map((p) => inline(p, forCopy)).join("<br>")}</p>`);
   }
   return out.join("\n");
@@ -115,6 +127,7 @@ function markdownToHtml(md, forCopy = false) {
 
 function markdownToPlain(md) {
   return md
+    .replace(/^\s*\[이미지\s*(\d+)(?:\s*[:：]\s*(.*?))?\]\s*$/gm, "📷 [이미지 $1 자리] 여기에 이미지 $1을 붙여넣고 이 줄은 지우세요")
     .replace(/^#{1,3}\s+/gm, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/^\s*[-*]\s+/gm, "• ");
@@ -146,6 +159,7 @@ async function copyBody() {
   if (!md.trim()) return toast("본문이 비어 있습니다.");
   const left = (md.match(/\[확인 필요\]/g) || []).length;
   if (left && !confirm(`본문에 [확인 필요] 표시가 ${left}곳 남아 있습니다.\n확인하지 않은 내용이 그대로 발행될 수 있습니다.\n\n그래도 복사할까요?`)) return;
+  const slots = md.split("\n").filter((l) => MARKER_RE.test(l)).length;
   const reviewNote = reviewStatusNote();
   if (reviewNote && !confirm(`${reviewNote}\n\n그래도 본문을 복사할까요?`)) return;
   const html = markdownToHtml(md, true);
@@ -156,7 +170,7 @@ async function copyBody() {
         "text/plain": new Blob([markdownToPlain(md)], { type: "text/plain" }),
       }),
     ]);
-    toast("본문(서식 포함) 복사 완료 — 네이버 본문에 붙여넣기 하세요");
+    toast(slots ? `본문 복사 완료 — 붙여넣은 뒤 노란 [이미지 자리] ${slots}곳에 이미지를 넣어 주세요` : "본문(서식 포함) 복사 완료 — 네이버 본문에 붙여넣기 하세요", 4500);
   } catch {
     // 서식 복사가 막힌 브라우저: 미리보기 영역을 선택해서 복사
     const box = document.createElement("div");
@@ -225,6 +239,8 @@ function readForm() {
     scheduledAt: $("scheduledAt").value,
     naverUrl: $("naverUrl").value.trim(),
     review: currentReview,
+    images: currentImages,
+    thumb: thumbState(),
   };
 }
 
@@ -237,6 +253,11 @@ function fillForm(p) {
   $("status").value = p?.status || "draft";
   $("scheduledAt").value = p?.scheduledAt || "";
   $("naverUrl").value = p?.naverUrl || "";
+  currentImages = Array.isArray(p?.images) ? p.images : [];
+  currentThumb = p?.thumb || null;
+  loadThumbFields();
+  renderBodyImages();
+  loadThumbBg();
   currentReview = p?.review || null;
   fixUndo = null;
   $("btnFixUndo").classList.add("hidden");
@@ -423,6 +444,412 @@ function applyMode(aiReady) {
     ? "국가법령정보센터·국세청·기재부 등 공식 사이트만 검색"
     : "공식 자료 확인 요청을 넣습니다 (claude.ai에서 웹 검색이 켜져 있어야 합니다)";
 }
+
+// ───────────── 이미지 만들기 ─────────────
+
+let currentImages = []; // 본문 이미지 [{n, place, alt, svg}]
+let currentThumb = null; // 대표 이미지 설정 {title, sub, office, preset, bgFile}
+let thumbBg = null; // 배경 그림(Image)
+const FONT = '"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
+
+function svgUrl(svg) {
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+}
+
+function safeName(t) {
+  return (t || "블로그").replace(/[\\/:*?"<>|]/g, "").replace(/\s+/g, " ").trim().slice(0, 40) || "블로그";
+}
+
+function downloadBlob(blob, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+async function copyImageBlob(blobPromise, label) {
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blobPromise })]);
+    toast(`${label} 복사 완료 — 네이버 본문의 자리에 붙여넣기(Ctrl+V) 하세요`, 3500);
+  } catch {
+    toast("이 브라우저에서는 이미지 복사가 안 됩니다. PNG 저장 후 네이버에서 사진으로 올려 주세요.", 4500);
+  }
+}
+
+// ── 본문 이미지 (claude.ai SVG) ──
+
+function cleanSvg(svg) {
+  let t = String(svg || "").trim();
+  if (!/^<svg[\s>]/i.test(t) || !/<\/svg>\s*$/i.test(t)) return null;
+  if (/<script|<foreignObject|\son[a-z]+\s*=|javascript:|(?:xlink:)?href\s*=\s*["']\s*(?:https?:|\/\/)/i.test(t)) return null;
+  if (!/xmlns=/.test(t)) t = t.replace(/^<svg/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  return t;
+}
+
+function svgSize(svg) {
+  const vb = svg.match(/viewBox\s*=\s*["']\s*[-\d.]+[\s,]+[-\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)/i);
+  if (vb) return { w: Number(vb[1]), h: Number(vb[2]) };
+  const w = svg.match(/\swidth\s*=\s*["']?([\d.]+)/i), h = svg.match(/\sheight\s*=\s*["']?([\d.]+)/i);
+  return { w: Number(w?.[1]) || 1200, h: Number(h?.[1]) || 800 };
+}
+
+function svgToPng(svg, scale = 2) {
+  return new Promise((resolve, reject) => {
+    const { w, h } = svgSize(svg);
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = Math.round(w * scale);
+      c.height = Math.round(h * scale);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob((b) => (b ? resolve(b) : reject(new Error("이미지 변환 실패"))), "image/png");
+    };
+    img.onerror = () => reject(new Error("SVG를 그리지 못했습니다. 코드가 잘렸는지 확인해 주세요."));
+    img.src = svgUrl(svg);
+  });
+}
+
+function parseBodyImages(text) {
+  const marks = [...text.matchAll(/===\s*이미지\s*(\d+)\s*===/g)];
+  const chunks = marks.length
+    ? marks.map((m, i) => ({ n: Number(m[1]), body: text.slice(m.index + m[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined) }))
+    : [...text.matchAll(/<svg[\s\S]*?<\/svg>/gi)].map((m, i) => ({ n: i + 1, body: m[0] }));
+  const ok = [];
+  const bad = [];
+  for (const c of chunks) {
+    const raw = (c.body.match(/<svg[\s\S]*?<\/svg>/i) || [])[0];
+    const svg = cleanSvg(raw);
+    if (!svg) {
+      bad.push(c.n);
+      continue;
+    }
+    ok.push({
+      n: c.n,
+      place: ((c.body.match(/위치\s*[:：]\s*(.+)/) || [])[1] || "").replace(/^#+\s*/, "").replace(/[*"“”]/g, "").trim(),
+      alt: ((c.body.match(/설명\s*[:：]\s*(.+)/) || [])[1] || "").replace(/[*]/g, "").trim(),
+      svg,
+    });
+  }
+  return { ok, bad };
+}
+
+const MARKER_RE = /^\s*\[이미지\s*\d+(?:\s*[:：].*?)?\]\s*$/;
+const norm = (t) => t.replace(/^#+\s*/, "").replace(/[\s*·.,:：()]/g, "");
+
+function placeMarkers(content, images) {
+  const lines = content.split("\n").filter((l) => !MARKER_RE.test(l));
+  // 뒤에서부터 넣어야 줄 번호가 밀리지 않음
+  const inserts = images.map((im) => {
+    const key = norm(im.place || "");
+    let idx = key ? lines.findIndex((l) => /^#{1,3}\s/.test(l) && (norm(l).includes(key) || key.includes(norm(l)))) : -1;
+    return { im, idx };
+  });
+  const end = (() => {
+    const disclaimer = lines.findIndex((l) => l.trim().startsWith("※"));
+    return disclaimer >= 0 ? disclaimer : lines.length;
+  })();
+  inserts
+    .sort((a, b) => (b.idx < 0 ? end : b.idx) - (a.idx < 0 ? end : a.idx) || b.im.n - a.im.n)
+    .forEach(({ im, idx }) => {
+      const at = idx >= 0 ? idx + 1 : end;
+      lines.splice(at, 0, "", `[이미지 ${im.n}: ${im.alt || im.place || "이미지"}]`, "");
+    });
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n");
+}
+
+function renderBodyImages() {
+  const box = $("bodyImgList");
+  $("bodyImgCount").textContent = currentImages.length ? `${currentImages.length}개` : "";
+  box.innerHTML = currentImages
+    .map(
+      (im) => `<div class="img-card">
+        <img src="${svgUrl(im.svg)}" alt="${escapeHtml(im.alt)}">
+        <div class="cap"><b>이미지 ${im.n}</b> ${escapeHtml(im.alt)}<br><span class="muted">위치: ${escapeHtml(im.place || "본문 끝")}</span></div>
+        <div class="actions">
+          <button data-img-copy="${im.n}">이미지 복사</button>
+          <button class="ghost" data-img-save="${im.n}">PNG 저장</button>
+          <button class="ghost danger" data-img-del="${im.n}">삭제</button>
+        </div>
+      </div>`
+    )
+    .join("");
+}
+
+$("btnBodyImgCopy").onclick = () => {
+  const content = $("content").value;
+  if (!content.trim()) return toast("본문을 먼저 완성해 주세요.");
+  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value) });
+};
+
+$("btnBodyImgApply").onclick = () => {
+  const text = $("bodyImgPaste").value.trim();
+  if (!text) return toast("claude.ai 답변을 붙여넣어 주세요.");
+  const { ok, bad } = parseBodyImages(text);
+  if (!ok.length) return toast("답변에서 SVG 이미지 코드를 찾지 못했습니다. 코드가 답변 안에 있는지 확인해 주세요.", 4500);
+  if (currentImages.length && !confirm(`지금 본문 이미지 ${currentImages.length}개를 새 이미지 ${ok.length}개로 바꿀까요?`)) return;
+  currentImages = ok;
+  $("content").value = placeMarkers($("content").value, ok);
+  $("bodyImgPaste").value = "";
+  renderBodyImages();
+  updateCounter();
+  markDirty();
+  const missing = ok.filter((im) => !im.place).length;
+  toast(`이미지 ${ok.length}개를 만들고 본문에 자리를 표시했습니다.${bad.length ? ` (이미지 ${bad.join(", ")}은 코드가 올바르지 않아 제외)` : ""}${missing ? " 위치를 못 찾은 이미지는 본문 끝에 두었습니다." : ""} 미리보기로 확인해 주세요.`, 5500);
+};
+
+$("bodyImgList").onclick = async (e) => {
+  const get = (attr) => currentImages.find((x) => x.n === Number(e.target.closest(`[${attr}]`)?.getAttribute(attr)));
+  if (e.target.closest("[data-img-copy]")) {
+    const im = get("data-img-copy");
+    return copyImageBlob(svgToPng(im.svg), `이미지 ${im.n}`);
+  }
+  if (e.target.closest("[data-img-save]")) {
+    const im = get("data-img-save");
+    try {
+      downloadBlob(await svgToPng(im.svg), `${safeName($("title").value)}-이미지${im.n}.png`);
+    } catch (err) {
+      toast(err.message, 3500);
+    }
+    return;
+  }
+  if (e.target.closest("[data-img-del]")) {
+    const im = get("data-img-del");
+    if (!confirm(`이미지 ${im.n}을 삭제할까요? 본문의 자리 표시도 지웁니다.`)) return;
+    currentImages = currentImages.filter((x) => x !== im);
+    $("content").value = $("content").value.split("\n").filter((l) => !new RegExp(`^\\s*\\[이미지\\s*${im.n}(?:\\s*[:：].*?)?\\]\\s*$`).test(l)).join("\n");
+    renderBodyImages();
+    updateCounter();
+    markDirty();
+  }
+};
+
+// ── 대표 이미지 (ChatGPT 배경 + 앱이 제목 얹기) ──
+
+function thumbState() {
+  return {
+    title: $("thumbTitle").value,
+    sub: $("thumbSub").value,
+    office: $("thumbOffice").value,
+    preset: $("thumbPreset").value,
+    bgFile: currentThumb?.bgFile || "",
+  };
+}
+
+function loadThumbFields() {
+  let office = "";
+  try { office = localStorage.getItem("thumbOffice") || ""; } catch {}
+  $("thumbTitle").value = currentThumb?.title || "";
+  $("thumbSub").value = currentThumb?.sub || "";
+  $("thumbOffice").value = currentThumb?.office ?? office;
+  $("thumbPreset").value = currentThumb?.preset || "bottom";
+}
+
+function loadThumbBg() {
+  thumbBg = null;
+  const file = currentThumb?.bgFile;
+  if (!file) return drawThumb();
+  const img = new Image();
+  img.onload = () => { thumbBg = img; drawThumb(); };
+  img.onerror = () => drawThumb();
+  img.src = `/api/images/${file}?t=${Date.now()}`;
+  drawThumb();
+}
+
+// 글자를 정해진 너비 안에 줄바꿈 (Enter로 나눈 줄은 그대로 지킴)
+function wrapLines(ctx, text, maxW) {
+  const out = [];
+  for (const para of text.split("\n").map((t) => t.trim()).filter(Boolean)) {
+    let line = "";
+    for (const word of para.split(/\s+/)) {
+      const test = line ? `${line} ${word}` : word;
+      if (ctx.measureText(test).width <= maxW) line = test;
+      else if (!line) {
+        // 한 단어가 너무 길면 글자 단위로
+        let part = "";
+        for (const ch of word) {
+          if (ctx.measureText(part + ch).width > maxW && part) { out.push(part); part = ch; } else part += ch;
+        }
+        line = part;
+      } else { out.push(line); line = word; }
+    }
+    if (line) out.push(line);
+  }
+  return out;
+}
+
+function fitText(ctx, text, maxW, maxLines, start, min) {
+  for (let size = start; size >= min; size -= 2) {
+    ctx.font = `bold ${size}px ${FONT}`;
+    const lines = wrapLines(ctx, text, maxW);
+    if (lines.length <= maxLines) return { size, lines };
+  }
+  ctx.font = `bold ${min}px ${FONT}`;
+  const all = wrapLines(ctx, text, maxW);
+  return { size: min, lines: all.slice(0, maxLines), cut: all.length > maxLines };
+}
+
+function thumbWarn(cut) {
+  if (cut === undefined) return;
+  $("thumbWarn").classList.toggle("hidden", !cut);
+}
+
+function drawThumb(canvas = $("thumbCanvas"), scale = 1) {
+  const S = 1080 * scale;
+  canvas.width = S;
+  canvas.height = S;
+  const ctx = canvas.getContext("2d");
+  const k = scale;
+  // 배경
+  if (thumbBg) {
+    const r = Math.max(S / thumbBg.width, S / thumbBg.height);
+    const w = thumbBg.width * r, h = thumbBg.height * r;
+    ctx.drawImage(thumbBg, (S - w) / 2, (S - h) / 2, w, h);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, S, S);
+    g.addColorStop(0, "#04b456");
+    g.addColorStop(1, "#02743a");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, S, S);
+    ctx.fillStyle = "rgba(255,255,255,0.07)";
+    for (const [x, y, rad] of [[0.85, 0.15, 0.28], [0.1, 0.9, 0.22], [0.95, 0.75, 0.12]]) {
+      ctx.beginPath(); ctx.arc(x * S, y * S, rad * S, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  const st = thumbState();
+  const title = (st.title.trim() || $("title").value.trim() || "대표 이미지 제목").replace(/\r/g, "");
+  const pad = 72 * k;
+  ctx.textBaseline = "top";
+
+  if (st.preset === "center") {
+    const boxW = S * 0.84;
+    const inner = boxW - 2 * 56 * k;
+    const t = fitText(ctx, title, inner, 4, 92 * k, 50 * k);
+    if (scale === 1) thumbWarn(Boolean(t.cut));
+    const lineH = t.size * 1.28;
+    const subH = st.sub ? 44 * k + 22 * k : 0;
+    const offH = st.office ? 40 * k : 0;
+    const boxH = 56 * k * 2 + t.lines.length * lineH + subH + offH;
+    const x0 = (S - boxW) / 2, y0 = (S - boxH) / 2;
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    roundRect(ctx, x0, y0, boxW, boxH, 28 * k); ctx.fill();
+    ctx.fillStyle = "#03a94d";
+    roundRect(ctx, x0, y0, boxW, 14 * k, 7 * k); ctx.fill();
+    ctx.textAlign = "center";
+    let y = y0 + 56 * k;
+    if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = "#03a94d"; ctx.fillText(st.sub, S / 2, y, inner); y += 44 * k + 22 * k; }
+    ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = "#1d2320";
+    for (const l of t.lines) { ctx.fillText(l, S / 2, y); y += lineH; }
+    if (st.office) { ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = "#6b746f"; ctx.fillText(st.office, S / 2, y + 6 * k, inner); }
+    return canvas;
+  }
+
+  const top = st.preset === "top";
+  const bandH = S * 0.42;
+  const y0 = top ? 0 : S - bandH;
+  ctx.fillStyle = top ? "rgba(3,169,77,0.93)" : "rgba(13,38,29,0.88)";
+  ctx.fillRect(0, y0, S, bandH);
+  const t = fitText(ctx, title, S - 2 * pad, 3, 96 * k, 54 * k);
+  if (scale === 1) thumbWarn(Boolean(t.cut));
+  const lineH = t.size * 1.25;
+  const subH = st.sub ? 40 * k + 18 * k : 0;
+  const blockH = subH + t.lines.length * lineH;
+  let y = y0 + (bandH - blockH) / 2 - (st.office ? 12 * k : 0);
+  ctx.textAlign = "left";
+  if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = top ? "#e6f6ec" : "#7fe0a8"; ctx.fillText(st.sub, pad, y, S - 2 * pad); y += subH; }
+  ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = "#ffffff";
+  for (const l of t.lines) { ctx.fillText(l, pad, y); y += lineH; }
+  if (st.office) {
+    ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.textAlign = "right";
+    ctx.fillText(st.office, S - pad, y0 + bandH - 30 * k - 24 * k);
+  }
+  return canvas;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function thumbPngBlob() {
+  const c = drawThumb(document.createElement("canvas"), 2);
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("이미지 만들기 실패"))), "image/png"));
+}
+
+async function setThumbBgFromFile(file) {
+  if (!file || !/^image\/(png|jpeg|webp)$/.test(file.type)) return toast("PNG·JPG·WEBP 그림만 넣을 수 있습니다.");
+  if (!currentId) {
+    await save({ auto: true });
+    if (!currentId) return toast("제목이나 본문을 먼저 입력해 주세요(글을 저장해야 그림을 넣을 수 있습니다).", 4000);
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => reject(new Error("그림을 읽지 못했습니다."));
+    fr.readAsDataURL(file);
+  });
+  // 너무 크면 줄여서 저장(2400px)
+  const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("그림을 열지 못했습니다.")); i.src = dataUrl; });
+  let upload = dataUrl;
+  if (Math.max(img.width, img.height) > 2400 || file.size > 8_000_000) {
+    const r = 2400 / Math.max(img.width, img.height);
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * Math.min(1, r));
+    c.height = Math.round(img.height * Math.min(1, r));
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    upload = c.toDataURL("image/jpeg", 0.92);
+  }
+  try {
+    const { bgFile } = await api(`/api/posts/${currentId}/thumbbg`, { method: "PUT", body: { dataUrl: upload } });
+    currentThumb = { ...thumbState(), bgFile };
+    thumbBg = img;
+    drawThumb();
+    markDirty();
+    toast(img.width !== img.height ? "그림을 넣었습니다. 정사각형이 아니어서 가운데를 기준으로 잘라 보여 줍니다." : "그림을 넣었습니다.", 3500);
+  } catch (e) {
+    toast(e.message, 4000);
+  }
+}
+
+$("btnThumbCopy").onclick = () => {
+  const title = $("title").value.trim() || $("thumbTitle").value.trim();
+  if (!title && !$("topic").value.trim()) return toast("제목을 먼저 입력해 주세요.");
+  copyRequest("thumb", { title, topic: $("topic").value.trim(), withText: $("thumbWithText").checked }, CHATGPT_URL, "ChatGPT");
+};
+for (const id of ["thumbTitle", "thumbSub", "thumbOffice", "thumbPreset"]) {
+  $(id).addEventListener("input", () => {
+    currentThumb = thumbState();
+    if (id === "thumbOffice") { try { localStorage.setItem("thumbOffice", $("thumbOffice").value); } catch {} }
+    drawThumb();
+    markDirty();
+  });
+}
+$("title").addEventListener("input", () => { if (!$("thumbTitle").value.trim()) drawThumb(); });
+$("thumbFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) setThumbBgFromFile(f); };
+$("btnThumbClearBg").onclick = () => { currentThumb = { ...thumbState(), bgFile: "" }; thumbBg = null; drawThumb(); markDirty(); };
+const drop = $("thumbDrop");
+drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) setThumbBgFromFile(f); });
+drop.addEventListener("click", () => drop.focus());
+drop.addEventListener("paste", (e) => {
+  const item = [...(e.clipboardData?.items || [])].find((it) => it.type.startsWith("image/"));
+  if (item) { e.preventDefault(); setThumbBgFromFile(item.getAsFile()); } else toast("복사된 그림이 없습니다. ChatGPT 그림을 내려받아 끌어다 놓아 주세요.", 3500);
+});
+$("btnThumbSave").onclick = async () => {
+  try { downloadBlob(await thumbPngBlob(), `${safeName($("title").value)}-대표이미지.png`); } catch (e) { toast(e.message, 3500); }
+};
+$("btnThumbCopyImg").onclick = () => copyImageBlob(thumbPngBlob(), "대표 이미지");
 
 // ───────────── 2차 검증 (ChatGPT) ─────────────
 
