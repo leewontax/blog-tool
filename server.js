@@ -391,6 +391,7 @@ function cleanThumb(t) {
     office: String(t.office || "").slice(0, 40),
     preset: THUMB_PRESETS.includes(t.preset) ? t.preset : "bottom",
     bgFile: /^[\w-]+-bg\.(png|jpg|webp)$/.test(t.bgFile || "") ? t.bgFile : "",
+    bandColor: /^#[0-9a-f]{6}$/i.test(t.bandColor || "") ? t.bandColor : "",
   };
 }
 
@@ -1096,7 +1097,8 @@ ${String(body.reviewText || "")}`);
 }
 
 // 본문 이미지 요청문 (claude.ai) — 도표형 이미지를 SVG 코드로 받기
-function buildBodyImagesRequest(body) {
+function buildBodyImagesRequest(body, style) {
+  const mine = body.useImgStyle ? imgStyleBlock(style?.body, "본문 이미지") : "";
   const count = Math.max(1, Math.min(4, Number(body.count) || 3));
   return `아래 네이버 블로그 글(세무사 블로그)의 본문에 넣을 도표형 이미지 ${count}개를 SVG 코드로 만들어 주세요.
 
@@ -1119,10 +1121,10 @@ function buildBodyImagesRequest(body) {
 - 맨 처음에 흰색 배경 사각형을 깔아 주세요.
 - 글꼴: font-family="'Malgun Gothic','Apple SD Gothic Neo','Noto Sans KR',sans-serif"
 - 글자 크기: 제목 44~52, 본문 최소 28 (작은 글씨 금지). 한 줄은 한글 26자 이내로 직접 줄바꿈(<tspan> 또는 여러 <text>)하고, 글자가 상자 밖으로 넘치지 않게 여백을 넉넉히 두세요.
-- 색: 주색 #03a94d, 진한 글자 #1d2320, 연한 배경 #e6f6ec, 회색 #6b746f, 강조 빨강 #d64545 (주의·마감 표시에만)
+${mine ? "- 색·모양: 아래 [내 본문 이미지 스타일]을 우선 따르세요. 단 글자 크기·SVG 규칙·정확성 규칙은 그대로 지키세요." : "- 색: 주색 #03a94d, 진한 글자 #1d2320, 연한 배경 #e6f6ec, 회색 #6b746f, 강조 빨강 #d64545 (주의·마감 표시에만)"}
 - 사용 금지: <script>, <foreignObject>, 외부 이미지·링크, 이모지, 그림자 효과 과다 사용
 - 단정하고 전문적인 느낌, 인쇄해도 또렷하게
-
+${mine ? `\n${mine}` : ""}
 [답변 형식] 이미지마다 아래 형식으로, 구분선을 지우지 말고 써 주세요.
 
 ===이미지 1===
@@ -1142,7 +1144,8 @@ ${checksText(body.checks)}`;
 }
 
 // 대표 이미지 요청문 (ChatGPT 이미지 생성)
-function buildThumbRequest(body) {
+function buildThumbRequest(body, style) {
+  const mine = body.useImgStyle ? imgStyleBlock(style?.thumb, "대표 이미지") : "";
   const withText = body.withText === true;
   const title = String(body.title || body.topic || "").trim();
   return `네이버 블로그 대표 이미지(썸네일)를 만들어 주세요. 이미지 생성 기능으로 그림 한 장을 만들어 주세요.
@@ -1154,15 +1157,18 @@ ${body.topic && body.topic !== title ? `- 주제: ${body.topic}
 ` : ""}
 [그림 조건]
 - 정사각형(1:1), 고해상도
-- 깔끔하고 신뢰감 있는 전문가 블로그 느낌. 과장되거나 유치한 느낌은 피해 주세요.
-- 색감: 초록(#03a94d) 계열을 중심으로 흰색·짙은 남색을 곁들인 밝고 단정한 색
+${mine
+  ? "- 그림체·색감·구도·분위기: 아래 [내 대표 이미지 스타일]을 따라 주세요. 기존 대표 이미지들과 한 묶음처럼 보이게 해 주세요."
+  : `- 깔끔하고 신뢰감 있는 전문가 블로그 느낌. 과장되거나 유치한 느낌은 피해 주세요.
+- 색감: 초록(#03a94d) 계열을 중심으로 흰색·짙은 남색을 곁들인 밝고 단정한 색`}
 - 글 주제와 어울리는 소재를 단순하게 표현 (예: 서류, 계산기, 달력, 집·토지, 동전, 체크리스트 등 주제에 맞게)
 - 실존 인물·유명인 얼굴, 회사 로고·상표, 워터마크는 넣지 마세요.
 ${withText
   ? `- 그림 아래쪽에 다음 글자를 크고 또렷하게 넣어 주세요(맞춤법 그대로, 글자 하나도 바꾸지 말 것): "${title}"
 - 한글이 깨지거나 틀리면 다시 만들어 주세요.`
   : `- 그림 안에 글자·숫자·기호를 절대 넣지 마세요. (제목 글자는 제가 따로 얹습니다)
-- 아래쪽 3분의 1은 제목 글자를 얹을 수 있도록 단순한 배경(복잡한 무늬 없이)으로 비워 주세요.`}`;
+- 아래쪽 3분의 1은 제목 글자를 얹을 수 있도록 단순한 배경(복잡한 무늬 없이)으로 비워 주세요.${mine ? " 스타일 지침에 글자 영역 위치가 다르게 나와 있으면 그 위치를 비워 주세요." : ""}`}
+${mine ? `\n${mine}` : ""}`;
 }
 
 async function buildTopicsRequest() {
@@ -1260,10 +1266,15 @@ async function handlePromptRequest(req, res, kind) {
     text = await buildTopicsRequest();
   } else if (kind === "bodyimages") {
     if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문을 먼저 완성해 주세요." });
-    text = buildBodyImagesRequest(body);
+    text = buildBodyImagesRequest(body, await readImgStyle());
   } else if (kind === "thumb") {
     if (!String(body.title || body.topic || "").trim()) return sendJson(res, 400, { error: "제목을 먼저 입력해 주세요." });
-    text = buildThumbRequest(body);
+    text = buildThumbRequest(body, await readImgStyle());
+  } else if (kind === "imgstyle-body" || kind === "imgstyle-thumb") {
+    const k = kind.split("-")[1];
+    const st = await readImgStyle();
+    if (!st[k].samples.length) return sendJson(res, 400, { error: "샘플 이미지를 먼저 넣어 주세요." });
+    text = buildImgStyleRequest(k, st[k]);
   } else if (kind === "fix") {
     if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문이 없습니다." });
     if (!String(body.reviewText || "").trim()) return sendJson(res, 400, { error: "먼저 2차 검증 결과를 저장해 주세요." });
@@ -1406,6 +1417,100 @@ async function handleAutoBackup(req, res, action) {
   sendJson(res, 405, { error: "지원하지 않는 요청" });
 }
 
+// ───────────────────────── 이미지 학습 (본문·대표 이미지 스타일) ─────────────────────────
+// 세무사님 블로그 이미지 샘플을 본문용/대표용으로 나눠 보관하고,
+// 앱이 뽑은 주요 색상 + AI가 정리한 스타일 지침을 이미지 요청문에 넣습니다.
+const STYLE_IMG_DIR = path.join(DATA_DIR, "styleimg");
+const IMG_KINDS = ["body", "thumb"];
+const STYLE_SAMPLE_MAX = 12;
+const IMGSTYLE_DEFAULT = { body: { samples: [], palette: [], guide: "" }, thumb: { samples: [], palette: [], guide: "" } };
+
+async function readImgStyle() {
+  const st = await readStore("imgstyle", IMGSTYLE_DEFAULT);
+  for (const k of IMG_KINDS) st[k] = { ...IMGSTYLE_DEFAULT[k], ...(st[k] || {}) };
+  return st;
+}
+
+const HEX_RE = /^#[0-9a-f]{6}$/i;
+
+async function handleImgStyle(req, res, kind, sub, id) {
+  const st = await readImgStyle();
+  if (req.method === "GET" && !kind) return sendJson(res, 200, st);
+  if (!IMG_KINDS.includes(kind)) return sendJson(res, 404, { error: "not found" });
+  const k = st[kind];
+  if (sub === "samples" && req.method === "POST") {
+    if (k.samples.length >= STYLE_SAMPLE_MAX) return sendJson(res, 400, { error: `샘플은 ${STYLE_SAMPLE_MAX}장까지 넣을 수 있습니다.` });
+    const b = await readBody(req, 12_000_000);
+    const m = String(b.dataUrl || "").match(/^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) return sendJson(res, 400, { error: "이미지를 읽지 못했습니다." });
+    const sid = randomUUID();
+    const file = `${kind}-${sid}.jpg`;
+    await fs.mkdir(STYLE_IMG_DIR, { recursive: true });
+    await fs.writeFile(path.join(STYLE_IMG_DIR, file), Buffer.from(m[1], "base64"));
+    k.samples.push({ id: sid, file, w: Number(b.w) || 0, h: Number(b.h) || 0, name: String(b.name || "").slice(0, 100), addedAt: new Date().toISOString() });
+    await writeStore("imgstyle", st);
+    return sendJson(res, 200, st);
+  }
+  if (sub === "samples" && req.method === "DELETE" && id) {
+    const sm = k.samples.find((x) => x.id === id);
+    if (sm) await fs.rm(path.join(STYLE_IMG_DIR, sm.file), { force: true });
+    k.samples = k.samples.filter((x) => x.id !== id);
+    await writeStore("imgstyle", st);
+    return sendJson(res, 200, st);
+  }
+  if (!sub && req.method === "PUT") {
+    const b = await readBody(req);
+    if (b.guide !== undefined) k.guide = String(b.guide).slice(0, 6000);
+    if (Array.isArray(b.palette)) k.palette = b.palette.filter((h) => HEX_RE.test(h)).slice(0, 8);
+    if (b.guide !== undefined) k.guideAt = new Date().toISOString();
+    await writeStore("imgstyle", st);
+    return sendJson(res, 200, st);
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
+function imgStyleBlock(k, label) {
+  if (!k || (!k.guide?.trim() && !k.palette?.length)) return "";
+  return `[내 ${label} 스타일 — 이 양식에 맞춰 주세요]
+${k.palette?.length ? `- 내 이미지에서 뽑은 주요 색: ${k.palette.join(", ")}\n` : ""}${k.guide?.trim() ? `- 스타일 지침:\n${k.guide.trim()}\n` : ""}`;
+}
+
+// 스타일 분석 요청문 (샘플 모음 이미지를 먼저 첨부한 뒤 보냄)
+function buildImgStyleRequest(kind, k) {
+  const n = k.samples.length;
+  const pal = k.palette?.length ? `\n참고로 프로그램이 이미지에서 자동으로 뽑은 주요 색은 ${k.palette.join(", ")} 입니다.\n` : "";
+  if (kind === "body") {
+    return `첨부한 그림은 제 네이버 블로그(세무 정보) 본문에 넣어 온 이미지 ${n}장을 한 장으로 모은 것입니다.
+앞으로 다른 AI가 이 양식과 비슷한 본문 이미지(요약 카드·표·체크리스트·일정표 등, SVG로 제작)를 만들 수 있도록, 공통 디자인 양식을 '본문 이미지 스타일 지침'으로 정리해 주세요.
+${pal}
+다음 항목별로 짧은 글머리표로, 색은 가능한 한 #RRGGBB 코드로 적어 주세요.
+1. 전체 느낌 (예: 깔끔한 카드형, 손글씨 느낌, 진한 대비 등)
+2. 배경 (색·무늬·테두리)
+3. 제목 처리 (위치, 크기 느낌, 굵기, 띠·상자·밑줄 등)
+4. 본문 글자 (색, 굵기, 줄 간격 느낌)
+5. 강조 방식 (색 글자, 형광펜, 박스, 아이콘 등)
+6. 도형·선·아이콘 (모서리 둥글기, 선 굵기, 아이콘 스타일)
+7. 표·카드·목록 모양
+8. 여백·정렬
+9. 자주 쓰는 구성
+10. 피해야 할 것
+이미지 속 글 내용(세금 내용)은 옮기지 말고 디자인만 분석해 주세요. 판단하기 어려운 항목은 "판단 어려움"이라고 적어 주세요. 전체 1,200자 이내, 지침 내용만 답해 주세요.`;
+  }
+  return `첨부한 그림은 제 네이버 블로그(세무 정보) 대표 이미지(썸네일) ${n}장을 한 장으로 모은 것입니다.
+앞으로 새 대표 이미지를 그릴 때 이 양식과 비슷하게 그릴 수 있도록, 공통 디자인 양식을 '대표 이미지 스타일 지침'으로 정리해 주세요. (지금은 그림을 그리지 말고 글로만 정리해 주세요)
+${pal}
+다음 항목별로 짧은 글머리표로, 색은 가능한 한 #RRGGBB 코드로 적어 주세요.
+1. 그림체 (실사 사진 / 일러스트 / 평면 아이콘 / 3D 등)
+2. 색감과 밝기
+3. 구도 (소재의 위치·크기, 여백)
+4. 배경
+5. 제목 글자 영역 (위치, 띠·상자 모양, 색) — 실제 글자 내용은 적지 말 것
+6. 자주 쓰는 소재
+7. 분위기
+8. 피해야 할 것
+마지막에 "그림 요청 요약:"으로 시작하는 한 문단(3문장 이내)을 덧붙여 주세요. 전체 1,000자 이내, 지침 내용만 답해 주세요.`;
+}
+
 // ───────────────────────── 라우팅 ─────────────────────────
 
 async function serveStatic(req, res, pathname) {
@@ -1435,11 +1540,23 @@ const server = http.createServer(async (req, res) => {
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
     const calMatch = pathname.match(/^\/api\/calendar(?:\/(holidays|events)(?:\/([\w-]+))?)?$/);
     if (calMatch) return await handleCalendar(req, res, calMatch[1], calMatch[2]);
-    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix|bodyimages|thumb)$/);
+    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix|bodyimages|thumb|imgstyle-body|imgstyle-thumb)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
     if (pathname === "/api/style") return await handleStyle(req, res);
+    const isMatch = pathname.match(/^\/api\/imgstyle(?:\/(body|thumb)(?:\/(samples)(?:\/([\w-]+))?)?)?$/);
+    if (isMatch) return await handleImgStyle(req, res, isMatch[1], isMatch[2], isMatch[3]);
+    const simgMatch = pathname.match(/^\/api\/styleimg\/((?:body|thumb)-[\w-]+\.jpg)$/);
+    if (simgMatch && req.method === "GET") {
+      try {
+        const data = await fs.readFile(path.join(STYLE_IMG_DIR, simgMatch[1]));
+        res.writeHead(200, { "Content-Type": "image/jpeg", "Cache-Control": "max-age=3600" });
+        return res.end(data);
+      } catch {
+        return sendJson(res, 404, { error: "이미지가 없습니다." });
+      }
+    }
     const imgMatch = pathname.match(/^\/api\/images\/([\w-]+-bg\.(?:png|jpg|webp))$/);
     if (imgMatch && req.method === "GET") {
       try {

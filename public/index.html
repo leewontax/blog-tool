@@ -16,6 +16,7 @@
       <button class="tab" data-view="list" role="tab">글 목록·예약</button>
       <button class="tab" data-view="templates" role="tab">템플릿</button>
       <button class="tab" data-view="samples" role="tab">내 글 학습</button>
+      <button class="tab" data-view="imgstyle" role="tab">이미지 학습</button>
     </nav>
     <button id="ticker" class="ticker" title="추천 주제 보기"><span class="ticker-label">추천</span><span id="tickerText" class="ticker-text">불러오는 중…</span></button>
     <div id="aiBadge" class="badge">확인 중…</div>
@@ -192,6 +193,7 @@
         <div class="img-section">
           <div class="list-head"><h4>본문 이미지 (claude.ai · 도표형)</h4><span id="bodyImgCount" class="muted small"></span></div>
           <p class="small muted">요약 카드·일정표·비교표·체크리스트처럼 글 내용을 정리한 이미지를 만듭니다. 본문에 있는 내용·숫자만 씁니다.</p>
+          <label class="check inline"><input type="checkbox" id="bodyImgStyle" /> <span>내 본문 이미지 스타일 반영 <small id="bodyImgStyleInfo"></small></span></label>
           <ol class="steps small">
             <li>
               <select id="bodyImgN" class="inline-select"><option value="2">2개</option><option value="3" selected>3개</option><option value="4">4개</option></select>
@@ -208,6 +210,7 @@
         <div class="img-section">
           <h4>대표 이미지 (ChatGPT 그림 + 제목 글자)</h4>
           <p class="small muted">ChatGPT가 그린 배경 그림 위에 앱이 제목을 정확하게 얹습니다(글자 오탈자 방지). 그림 없이 기본 배경으로도 만들 수 있습니다.</p>
+          <label class="check inline"><input type="checkbox" id="thumbImgStyle" /> <span>내 대표 이미지 스타일 반영 <small id="thumbImgStyleInfo"></small></span></label>
           <ol class="steps small">
             <li>
               <label class="check inline"><input type="checkbox" id="thumbWithText" /> ChatGPT가 글자까지 넣기 <span class="muted">(한글 오탈자가 생길 수 있어 비추천)</span></label>
@@ -230,6 +233,7 @@
               <label class="small">사무소명 (선택)
                 <input id="thumbOffice" placeholder="예: ○○세무회계" />
               </label>
+              <div class="small"><b>띠·상자 색</b> <span class="muted">(내 주요 색에서 고르기)</span><div id="thumbBand" class="swatches"></div></div>
               <label class="small">글자 배치
                 <select id="thumbPreset">
                   <option value="bottom">아래쪽 띠</option>
@@ -309,6 +313,56 @@
         <div id="holList" class="small"></div>
       </details>
     </aside>
+  </main>
+
+  <!-- ───────── 이미지 학습 ───────── -->
+  <main id="view-imgstyle" class="view">
+    <section class="panel wide">
+      <h2>이미지 학습</h2>
+      <p class="muted">세무사님 블로그에 쓰던 이미지를 넣어 두면, 새 이미지를 만들 때 <b>비슷한 양식(색·모양·구도)</b>으로 만들도록 요청문에 반영합니다. 본문 이미지와 대표 이미지를 따로 학습합니다.
+        AI를 다시 훈련시키는 방식이 아니라, 앱이 뽑은 <b>주요 색</b>과 AI가 정리한 <b>스타일 지침</b>을 매번 요청문에 넣는 방식입니다. 추가 비용은 없습니다.</p>
+      <ul class="tips">
+        <li>3~8장 정도, 최근에 쓴 <b>가장 마음에 드는 이미지</b>로 넣어 주세요.</li>
+        <li>⚠ 고객 이름·연락처 등 <b>개인정보가 보이는 이미지는 넣지 마세요.</b> 분석할 때 AI 서비스로 보내집니다.</li>
+        <li>샘플을 바꾸면 '내 주요 색'은 자동으로 다시 계산됩니다. 스타일 지침은 ①② 순서로 다시 받아 주세요.</li>
+      </ul>
+      <div class="is-sec" data-kind="body">
+        <div class="list-head"><h3>본문 이미지 학습 (claude.ai)</h3><span id="isCount-body" class="muted small"></span></div>
+        <p class="muted small">블로그 본문에 넣어 온 요약 카드·표·설명 이미지를 넣어 주세요.</p>
+        <div class="is-drop" id="isDrop-body" tabindex="0">
+          이미지를 여기에 <b>끌어다 놓거나</b>, 눌러서 <b>Ctrl+V</b>, 또는
+          <label class="button ghost small">파일 선택<input type="file" accept="image/*" multiple hidden data-is-file="body" /></label>
+          <span class="muted small">(최대 12장)</span>
+        </div>
+        <div class="is-grid" id="isGrid-body"></div>
+        <div class="is-palette"><span class="small"><b>내 주요 색</b> (앱이 자동으로 뽑음)</span><div id="isPal-body" class="swatches"></div></div>
+        <ol class="steps small">
+          <li><button data-is-collage="body">① 샘플 모음 이미지 복사 → claude.ai 열기</button> → 새 대화창에 <b>Ctrl+V</b> (그림 첨부)</li>
+          <li><button data-is-req="body">② 스타일 분석 요청문 복사</button> → 같은 대화창에 <b>Ctrl+V</b> 후 보내기</li>
+          <li>답변을 복사해 아래 칸에 붙여넣고 <b>스타일 지침 저장</b> </li>
+        </ol>
+        <textarea id="isGuide-body" rows="8" placeholder="아직 분석하지 않았습니다. 위 순서대로 받은 스타일 지침을 붙여넣으세요. 직접 고쳐도 됩니다."></textarea>
+        <div class="actions"><button class="primary small" data-is-save="body">스타일 지침 저장</button><span id="isMeta-body" class="muted small"></span></div>
+      </div>
+      <div class="is-sec" data-kind="thumb">
+        <div class="list-head"><h3>대표 이미지 학습 (ChatGPT)</h3><span id="isCount-thumb" class="muted small"></span></div>
+        <p class="muted small">블로그 대표 이미지(썸네일)를 넣어 주세요. 제목 글자가 들어간 이미지여도 괜찮습니다.</p>
+        <div class="is-drop" id="isDrop-thumb" tabindex="0">
+          이미지를 여기에 <b>끌어다 놓거나</b>, 눌러서 <b>Ctrl+V</b>, 또는
+          <label class="button ghost small">파일 선택<input type="file" accept="image/*" multiple hidden data-is-file="thumb" /></label>
+          <span class="muted small">(최대 12장)</span>
+        </div>
+        <div class="is-grid" id="isGrid-thumb"></div>
+        <div class="is-palette"><span class="small"><b>내 주요 색</b> (앱이 자동으로 뽑음)</span><div id="isPal-thumb" class="swatches"></div></div>
+        <ol class="steps small">
+          <li><button data-is-collage="thumb">① 샘플 모음 이미지 복사 → ChatGPT 열기</button> → 새 대화창에 <b>Ctrl+V</b> (그림 첨부)</li>
+          <li><button data-is-req="thumb">② 스타일 분석 요청문 복사</button> → 같은 대화창에 <b>Ctrl+V</b> 후 보내기</li>
+          <li>답변을 복사해 아래 칸에 붙여넣고 <b>스타일 지침 저장</b> <span class="muted">(ChatGPT가 그림을 그리려 하면 '글로만 정리해 줘'라고 요청)</span></li>
+        </ol>
+        <textarea id="isGuide-thumb" rows="8" placeholder="아직 분석하지 않았습니다. 위 순서대로 받은 스타일 지침을 붙여넣으세요. 직접 고쳐도 됩니다."></textarea>
+        <div class="actions"><button class="primary small" data-is-save="thumb">스타일 지침 저장</button><span id="isMeta-thumb" class="muted small"></span></div>
+      </div>
+    </section>
   </main>
 
   <!-- ───────── 글 목록 ───────── -->

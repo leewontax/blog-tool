@@ -39,7 +39,7 @@ mark { background: var(--warn); color: inherit; padding: 0 2px; border-radius: 3
   padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
 }
 .brand { font-weight: 700; }
-.tabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.tabs { display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab { white-space: nowrap; border: 0; background: none; padding: 8px 14px; border-radius: 8px; color: var(--muted); font-weight: 600; }
 .tab.active { background: var(--accent-soft); color: var(--accent); }
@@ -51,7 +51,7 @@ mark { background: var(--warn); color: inherit; padding: 0 2px; border-radius: 3
 .view { display: none; }
 .view.active { display: grid; }
 #view-write { grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px; align-items: start; }
-#view-list, #view-templates, #view-samples { padding: 16px; }
+#view-list, #view-templates, #view-samples, #view-imgstyle { padding: 16px; }
 #view-calendar { grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; align-items: start; }
 @media (max-width: 1000px) { #view-calendar { grid-template-columns: 1fr; } }
 @media (max-width: 900px) { #view-write { grid-template-columns: 1fr; } }
@@ -158,7 +158,7 @@ table.posts td.title { cursor: pointer; font-weight: 600; }
 .tpl-top label.check { margin: 0; font-size: 13px; }
 
 /* 추천 주제 */
-.ticker { flex: 0 1 340px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: var(--bg); font-weight: 500; overflow: hidden; }
+.ticker { flex: 1 1 160px; max-width: 360px; min-width: 0; display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 99px; background: var(--bg); font-weight: 500; overflow: hidden; }
 .ticker-label { flex: none; font-size: 11px; font-weight: 700; color: var(--accent); }
 .ticker-text { display: block; line-height: 1.4; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; text-align: left; }
 .ticker-text.roll { animation: roll .45s ease; }
@@ -335,3 +335,21 @@ label.check.inline { display: inline-flex; margin: 0 8px 4px 0; font-size: 13px;
 .check-add input { margin: 0; background: var(--panel); }
 .check-box.all-done { border-color: var(--accent); }
 .check-add button { flex: none; white-space: nowrap; }
+
+/* 이미지 학습 */
+.is-sec { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.is-sec h3 { margin: 0; }
+.is-drop { margin: 8px 0; padding: 16px; border: 2px dashed var(--line); border-radius: 10px; text-align: center; font-size: 14px; background: var(--bg); outline: none; }
+.is-drop.over, .is-drop:focus { border-color: var(--accent); }
+.is-drop .button { margin: 0 4px; }
+.is-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin: 8px 0; }
+.is-item { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #fff; aspect-ratio: 1; }
+.is-item img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.is-item button { position: absolute; top: 4px; right: 4px; padding: 0 6px; font-size: 12px; background: rgba(255,255,255,.9); }
+.is-palette { margin: 6px 0 10px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.swatch { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px 2px 2px; border: 1px solid var(--line); border-radius: 99px; font-size: 11px; font-family: ui-monospace, monospace; background: var(--panel); cursor: default; }
+.swatch i { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,.12); display: inline-block; }
+button.swatch { cursor: pointer; font-weight: 500; }
+button.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.is-sec textarea { margin-bottom: 8px; }

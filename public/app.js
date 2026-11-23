@@ -637,7 +637,7 @@ function renderBodyImages() {
 $("btnBodyImgCopy").onclick = () => {
   const content = $("content").value;
   if (!content.trim()) return toast("본문을 먼저 완성해 주세요.");
-  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks });
+  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks, useImgStyle: $("bodyImgStyle").checked });
 };
 
 $("btnBodyImgApply").onclick = () => {
@@ -691,6 +691,7 @@ function thumbState() {
     office: $("thumbOffice").value,
     preset: $("thumbPreset").value,
     bgFile: currentThumb?.bgFile || "",
+    bandColor: currentThumb?.bandColor || "",
   };
 }
 
@@ -701,6 +702,7 @@ function loadThumbFields() {
   $("thumbSub").value = currentThumb?.sub || "";
   $("thumbOffice").value = currentThumb?.office ?? office;
   $("thumbPreset").value = currentThumb?.preset || "bottom";
+  renderBandSwatches();
 }
 
 function loadThumbBg() {
@@ -791,11 +793,13 @@ function drawThumb(canvas = $("thumbCanvas"), scale = 1) {
     const x0 = (S - boxW) / 2, y0 = (S - boxH) / 2;
     ctx.fillStyle = "rgba(255,255,255,0.96)";
     roundRect(ctx, x0, y0, boxW, boxH, 28 * k); ctx.fill();
-    ctx.fillStyle = "#03a94d";
+    const accent = st.bandColor || "#03a94d";
+    const accentText = luminance(accent) > 0.6 ? "#1d2320" : accent;
+    ctx.fillStyle = accent;
     roundRect(ctx, x0, y0, boxW, 14 * k, 7 * k); ctx.fill();
     ctx.textAlign = "center";
     let y = y0 + 56 * k;
-    if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = "#03a94d"; ctx.fillText(st.sub, S / 2, y, inner); y += 44 * k + 22 * k; }
+    if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = accentText; ctx.fillText(st.sub, S / 2, y, inner); y += 44 * k + 22 * k; }
     ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = "#1d2320";
     for (const l of t.lines) { ctx.fillText(l, S / 2, y); y += lineH; }
     if (st.office) { ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = "#6b746f"; ctx.fillText(st.office, S / 2, y + 6 * k, inner); }
@@ -805,7 +809,9 @@ function drawThumb(canvas = $("thumbCanvas"), scale = 1) {
   const top = st.preset === "top";
   const bandH = S * 0.42;
   const y0 = top ? 0 : S - bandH;
-  ctx.fillStyle = top ? "rgba(3,169,77,0.93)" : "rgba(13,38,29,0.88)";
+  const band = st.bandColor ? hexToRgba(st.bandColor, 0.92) : top ? "rgba(3,169,77,0.93)" : "rgba(13,38,29,0.88)";
+  const light = st.bandColor && luminance(st.bandColor) > 0.6; // 밝은 띠면 어두운 글자
+  ctx.fillStyle = band;
   ctx.fillRect(0, y0, S, bandH);
   const t = fitText(ctx, title, S - 2 * pad, 3, 96 * k, 54 * k);
   if (scale === 1) thumbWarn(Boolean(t.cut));
@@ -814,11 +820,11 @@ function drawThumb(canvas = $("thumbCanvas"), scale = 1) {
   const blockH = subH + t.lines.length * lineH;
   let y = y0 + (bandH - blockH) / 2 - (st.office ? 12 * k : 0);
   ctx.textAlign = "left";
-  if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = top ? "#e6f6ec" : "#7fe0a8"; ctx.fillText(st.sub, pad, y, S - 2 * pad); y += subH; }
-  ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = "#ffffff";
+  if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = light ? "#3d4642" : st.bandColor ? "rgba(255,255,255,0.85)" : top ? "#e6f6ec" : "#7fe0a8"; ctx.fillText(st.sub, pad, y, S - 2 * pad); y += subH; }
+  ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = light ? "#1d2320" : "#ffffff";
   for (const l of t.lines) { ctx.fillText(l, pad, y); y += lineH; }
   if (st.office) {
-    ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = "rgba(255,255,255,0.8)"; ctx.textAlign = "right";
+    ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = light ? "rgba(29,35,32,0.75)" : "rgba(255,255,255,0.8)"; ctx.textAlign = "right";
     ctx.fillText(st.office, S - pad, y0 + bandH - 30 * k - 24 * k);
   }
   return canvas;
@@ -877,7 +883,7 @@ async function setThumbBgFromFile(file) {
 $("btnThumbCopy").onclick = () => {
   const title = $("title").value.trim() || $("thumbTitle").value.trim();
   if (!title && !$("topic").value.trim()) return toast("제목을 먼저 입력해 주세요.");
-  copyRequest("thumb", { title, topic: $("topic").value.trim(), withText: $("thumbWithText").checked }, CHATGPT_URL, "ChatGPT");
+  copyRequest("thumb", { title, topic: $("topic").value.trim(), withText: $("thumbWithText").checked, useImgStyle: $("thumbImgStyle").checked }, CHATGPT_URL, "ChatGPT");
 };
 for (const id of ["thumbTitle", "thumbSub", "thumbOffice", "thumbPreset"]) {
   $(id).addEventListener("input", () => {
@@ -903,6 +909,251 @@ $("btnThumbSave").onclick = async () => {
   try { downloadBlob(await thumbPngBlob(), `${safeName($("title").value)}-대표이미지.png`); } catch (e) { toast(e.message, 3500); }
 };
 $("btnThumbCopyImg").onclick = () => copyImageBlob(thumbPngBlob(), "대표 이미지");
+
+// ───────────── 이미지 학습 ─────────────
+
+let imgStyle = { body: { samples: [], palette: [], guide: "" }, thumb: { samples: [], palette: [], guide: "" } };
+const IMG_KIND = { body: { url: CLAUDE_URL, site: "claude.ai" }, thumb: { url: CHATGPT_URL, site: "ChatGPT" } };
+const styleTouched = { body: false, thumb: false };
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function hexToRgba(hex, a) {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${a})`;
+}
+function luminance(hex) {
+  const [r, g, b] = hexToRgb(hex);
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+const toHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+
+function hasImgStyle(kind) {
+  const k = imgStyle[kind];
+  return Boolean(k && (k.guide?.trim() || k.palette?.length));
+}
+
+function swatchHtml(hex, btnAttr = "") {
+  return btnAttr
+    ? `<button class="swatch" ${btnAttr}><i style="background:${hex}"></i>${hex}</button>`
+    : `<span class="swatch"><i style="background:${hex}"></i>${hex}</span>`;
+}
+
+function renderImgStyle() {
+  for (const kind of ["body", "thumb"]) {
+    const k = imgStyle[kind];
+    $(`isCount-${kind}`).textContent = k.samples.length ? `샘플 ${k.samples.length}장` : "";
+    $(`isGrid-${kind}`).innerHTML = k.samples
+      .map((sm) => `<div class="is-item"><img src="/api/styleimg/${sm.file}" alt="" loading="lazy"><button data-is-del="${kind}:${sm.id}" title="삭제">✕</button></div>`)
+      .join("");
+    $(`isPal-${kind}`).innerHTML = k.palette.length ? k.palette.map((h) => swatchHtml(h)).join("") : '<span class="muted small">샘플을 넣으면 자동으로 표시됩니다.</span>';
+    if (document.activeElement !== $(`isGuide-${kind}`)) $(`isGuide-${kind}`).value = k.guide || "";
+    $(`isMeta-${kind}`).textContent = k.guideAt ? `저장: ${timeStr(k.guideAt)}` : "";
+  }
+  updateImgStyleToggles();
+  renderBandSwatches();
+}
+
+function updateImgStyleToggles() {
+  for (const [kind, id] of [["body", "bodyImgStyle"], ["thumb", "thumbImgStyle"]]) {
+    const ok = hasImgStyle(kind);
+    const box = $(id);
+    box.disabled = !ok;
+    if (!ok) box.checked = false;
+    else if (!styleTouched[kind]) box.checked = true;
+    const k = imgStyle[kind];
+    $(`${id}Info`).textContent = ok
+      ? `(주요 색 ${k.palette.length}개${k.guide?.trim() ? " + 스타일 지침" : ""})`
+      : "('이미지 학습'에서 샘플을 넣으면 사용할 수 있습니다)";
+  }
+}
+
+function renderBandSwatches() {
+  const box = $("thumbBand");
+  if (!box) return;
+  const colors = [...new Set([...(imgStyle.thumb.palette || []), ...(imgStyle.body.palette || [])])].slice(0, 8);
+  const cur = currentThumb?.bandColor || "";
+  box.innerHTML =
+    `<button class="swatch ${cur ? "" : "on"}" data-band=""><i style="background:linear-gradient(135deg,#0d261d 50%,#03a94d 50%)"></i>기본</button>` +
+    colors.map((h) => `<button class="swatch ${cur === h ? "on" : ""}" data-band="${h}"><i style="background:${h}"></i>${h}</button>`).join("") +
+    (colors.length ? "" : '<span class="muted small">이미지 학습에 샘플을 넣으면 내 색이 나옵니다.</span>');
+}
+
+function loadImg(src) {
+  return new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = () => reject(new Error("이미지를 열지 못했습니다."));
+    i.src = src;
+  });
+}
+
+// 주요 색 뽑기: 거의 흰색(배경)은 빼고, 많이 쓰인 색부터 서로 충분히 다른 색으로 최대 6개
+async function computePalette(kind) {
+  const buckets = new Map();
+  for (const sm of imgStyle[kind].samples) {
+    let img;
+    try { img = await loadImg(`/api/styleimg/${sm.file}`); } catch { continue; }
+    const c = document.createElement("canvas");
+    const r = 80 / Math.max(img.width, img.height);
+    c.width = Math.max(1, Math.round(img.width * r));
+    c.height = Math.max(1, Math.round(img.height * r));
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) {
+      const [R, G, B] = [d[i], d[i + 1], d[i + 2]];
+      if (R > 232 && G > 232 && B > 232) continue;
+      const key = (R >> 4) * 256 + (G >> 4) * 16 + (B >> 4);
+      const bk = buckets.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+      bk.n++; bk.r += R; bk.g += G; bk.b += B;
+      buckets.set(key, bk);
+    }
+  }
+  const sorted = [...buckets.values()].sort((a, b) => b.n - a.n).map((b) => [b.r / b.n, b.g / b.n, b.b / b.n]);
+  const picked = [];
+  for (const c of sorted) {
+    if (picked.length >= 6) break;
+    if (picked.every((p) => Math.hypot(p[0] - c[0], p[1] - c[1], p[2] - c[2]) > 60)) picked.push(c);
+  }
+  return picked.map((c) => toHex(...c));
+}
+
+async function addStyleImages(kind, files) {
+  const list = [...files].filter((f) => f && f.type.startsWith("image/"));
+  if (!list.length) return toast("이미지 파일이 아닙니다.");
+  let added = 0;
+  for (const f of list) {
+    if (imgStyle[kind].samples.length >= 12) { toast("샘플은 12장까지 넣을 수 있습니다."); break; }
+    try {
+      const url = URL.createObjectURL(f);
+      const img = await loadImg(url);
+      URL.revokeObjectURL(url);
+      const r = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * r);
+      c.height = Math.round(img.height * r);
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
+      imgStyle = await api(`/api/imgstyle/${kind}/samples`, { method: "POST", body: { dataUrl: c.toDataURL("image/jpeg", 0.9), w: c.width, h: c.height, name: f.name } });
+      added++;
+    } catch (e) {
+      toast(e.message, 3500);
+    }
+  }
+  if (added) {
+    imgStyle = await api(`/api/imgstyle/${kind}`, { method: "PUT", body: { palette: await computePalette(kind) } });
+    toast(`샘플 ${added}장을 넣고 주요 색을 다시 계산했습니다.`);
+  }
+  renderImgStyle();
+}
+
+// 샘플 여러 장을 한 장으로 모으기 (claude.ai·ChatGPT에 한 번에 붙여넣기 위함)
+async function makeCollage(kind) {
+  const sams = imgStyle[kind].samples;
+  const imgs = [];
+  for (const sm of sams) { try { imgs.push(await loadImg(`/api/styleimg/${sm.file}`)); } catch {} }
+  if (!imgs.length) throw new Error("샘플 이미지가 없습니다.");
+  const cols = imgs.length <= 2 ? imgs.length : imgs.length <= 4 ? 2 : imgs.length <= 9 ? 3 : 4;
+  const rows = Math.ceil(imgs.length / cols);
+  const cell = 520, gap = 16;
+  const c = document.createElement("canvas");
+  c.width = cols * cell + (cols + 1) * gap;
+  c.height = rows * cell + (rows + 1) * gap;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#e9ecea";
+  ctx.fillRect(0, 0, c.width, c.height);
+  imgs.forEach((img, i) => {
+    const x = gap + (i % cols) * (cell + gap), y = gap + Math.floor(i / cols) * (cell + gap);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(x, y, cell, cell);
+    const r = Math.min(cell / img.width, cell / img.height);
+    const w = img.width * r, h = img.height * r;
+    ctx.drawImage(img, x + (cell - w) / 2, y + (cell - h) / 2, w, h);
+    ctx.fillStyle = "rgba(29,35,32,.75)";
+    ctx.fillRect(x, y, 44, 34);
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold 22px ${FONT}`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(i + 1), x + 14, y + 17);
+  });
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("모음 이미지 만들기 실패"))), "image/png"));
+}
+
+async function loadImgStyle() {
+  try { imgStyle = await api("/api/imgstyle"); } catch { return; }
+  renderImgStyle();
+}
+
+$("view-imgstyle").addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-is-del]");
+  if (del) {
+    const [kind, id] = del.dataset.isDel.split(":");
+    if (!confirm("이 샘플을 삭제할까요?")) return;
+    imgStyle = await api(`/api/imgstyle/${kind}/samples/${id}`, { method: "DELETE" });
+    imgStyle = await api(`/api/imgstyle/${kind}`, { method: "PUT", body: { palette: await computePalette(kind) } });
+    return renderImgStyle();
+  }
+  const col = e.target.closest("[data-is-collage]");
+  if (col) {
+    const kind = col.dataset.isCollage;
+    if (!imgStyle[kind].samples.length) return toast("샘플 이미지를 먼저 넣어 주세요.");
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": makeCollage(kind) })]);
+      window.open(IMG_KIND[kind].url, "_blank", "noopener");
+      toast(`샘플 모음 이미지를 복사했습니다. ${IMG_KIND[kind].site} 새 대화창에 Ctrl+V로 붙여넣은 뒤, ②번 요청문을 복사해 오세요.`, 5500);
+    } catch (err) {
+      toast(`이미지 복사가 안 됩니다(${err.message}). 샘플 원본 파일을 ${IMG_KIND[kind].site}에 직접 끌어다 놓아 주세요.`, 5500);
+    }
+    return;
+  }
+  const rq = e.target.closest("[data-is-req]");
+  if (rq) {
+    const kind = rq.dataset.isReq;
+    try {
+      const { text } = await api(`/api/prompt/imgstyle-${kind}`, { method: "POST", body: {} });
+      try { await navigator.clipboard.writeText(text); } catch { fallbackCopy(text); }
+      toast(`요청문을 복사했습니다. 그림을 붙여넣은 ${IMG_KIND[kind].site} 대화창에 Ctrl+V 후 보내세요.`, 4500);
+    } catch (err) {
+      toast(err.message, 3500);
+    }
+    return;
+  }
+  const sv = e.target.closest("[data-is-save]");
+  if (sv) {
+    const kind = sv.dataset.isSave;
+    imgStyle = await api(`/api/imgstyle/${kind}`, { method: "PUT", body: { guide: $(`isGuide-${kind}`).value } });
+    renderImgStyle();
+    toast("스타일 지침을 저장했습니다. 이미지 요청문에 자동으로 반영됩니다.");
+  }
+});
+for (const kind of ["body", "thumb"]) {
+  const drop = $(`isDrop-${kind}`);
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => { e.preventDefault(); drop.classList.remove("over"); addStyleImages(kind, e.dataTransfer.files); });
+  drop.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.items || [])].filter((it) => it.type.startsWith("image/")).map((it) => it.getAsFile());
+    if (files.length) { e.preventDefault(); addStyleImages(kind, files); } else toast("복사된 이미지가 없습니다.");
+  });
+}
+document.querySelectorAll("[data-is-file]").forEach((inp) => {
+  inp.onchange = (e) => { const files = [...e.target.files]; e.target.value = ""; addStyleImages(inp.dataset.isFile, files); };
+});
+$("bodyImgStyle").addEventListener("change", () => (styleTouched.body = true));
+$("thumbImgStyle").addEventListener("change", () => (styleTouched.thumb = true));
+$("thumbBand").onclick = (e) => {
+  const b = e.target.closest("[data-band]");
+  if (!b) return;
+  currentThumb = { ...thumbState(), bandColor: b.dataset.band };
+  renderBandSwatches();
+  drawThumb();
+  markDirty();
+};
 
 // ───────────── 2차 검증 (ChatGPT) ─────────────
 
@@ -1978,6 +2229,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
   if (name === "list") { loadPosts(); loadAutoBackup(); }
   if (name === "samples") loadSamples();
+  if (name === "imgstyle") loadImgStyle();
   if (name === "calendar") loadCalendar();
 }
 
@@ -2045,6 +2297,7 @@ document.addEventListener("visibilitychange", () => {
   }
   await loadTemplates();
   await loadSamples();
+  await loadImgStyle();
   fillForm(null);
   await loadTopics();
   if (!topicsDoc?.doc && !topicsDoc?.refreshing) autoTopics(true);
