@@ -908,6 +908,43 @@ ${body.topic ? `주제: ${body.topic}
 ${String(body.content || "")}`;
 }
 
+// 2차 검증 결과를 반영한 수정본 요청문 (claude.ai에 붙여넣기)
+async function buildFixRequest(body) {
+  const parts = [SYSTEM_PROMPT.replace("- 제목은 쓰지 말고 본문만 씁니다.\n", "")];
+  if (body.useStyle) {
+    const style = await styleSystemBlock();
+    if (style) parts.push(style.text);
+  }
+  parts.push(`──────── 이번 작업: 2차 검증 결과 반영 ────────
+아래 [원래 글]을 다른 AI(ChatGPT)가 검증한 [검증 결과]가 있습니다. 검증 결과를 반영해 수정한 전체 글을 만들어 주세요.
+
+[수정 원칙]
+1. 검증 결과에서 "수정 필요"로 판정된 항목과 [확인 필요] 확인 결과만 고칩니다. 나머지 문장·말투·구성·서식은 그대로 둡니다.
+2. 검증 의견을 그대로 믿지 말고, 반영하기 전에 그 내용이 맞는지 스스로 확인하세요.
+   - 웹 검색을 사용할 수 있다면 ${OFFICIAL_SITES_TEXT} 등 공식 자료로 확인하세요.
+   - 검증 의견이 틀렸다고 판단되면 반영하지 말고, 수정 내역에 "미반영"과 이유를 적으세요.
+3. "확인 불가" 항목이나 확인되지 않은 내용은 지어내지 말고 [확인 필요]로 남겨 두세요.
+4. 광고·개인정보 점검에서 지적된 표현은 고쳐 주세요.
+5. 세액 계산을 고쳤다면 산식을 다시 검산하세요.
+
+[답변 형식] 아래 형식 그대로, 구분선(=== ===)을 지우지 말고 답해 주세요.
+
+===수정 내역===
+- (반영) 원래 문장 → 고친 문장 / 근거
+- (미반영) 검증 의견 → 반영하지 않은 이유
+===본문===
+(수정한 전체 본문. 제목은 넣지 마세요. 고치지 않은 부분도 빠짐없이 전부 써 주세요.)
+
+──────── 원래 글 ────────
+제목: ${body.title || "(제목 없음)"}
+
+${String(body.content || "")}
+
+──────── 검증 결과 (ChatGPT) ────────
+${String(body.reviewText || "")}`);
+  return parts.join("\n\n");
+}
+
 async function buildTopicsRequest() {
   const { region } = await readStore("settings", { region: "안성시" });
   const old = await readStore("topics", null);
@@ -996,6 +1033,10 @@ async function handlePromptRequest(req, res, kind) {
     if (!text) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
   } else if (kind === "topics") {
     text = await buildTopicsRequest();
+  } else if (kind === "fix") {
+    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문이 없습니다." });
+    if (!String(body.reviewText || "").trim()) return sendJson(res, 400, { error: "먼저 2차 검증 결과를 저장해 주세요." });
+    text = await buildFixRequest(body);
   } else if (kind === "review") {
     if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "검증할 본문이 없습니다." });
     text = buildReviewRequest(body);
@@ -1030,7 +1071,7 @@ const server = http.createServer(async (req, res) => {
     }
     const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import))?$/);
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
-    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review)$/);
+    const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
     if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);

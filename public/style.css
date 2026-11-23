@@ -215,3 +215,11 @@ body.mode-copy .api-only { display: none !important; }
 .review-result table { font-size: 13px; width: 100%; }
 .review-result td:nth-child(3) { white-space: nowrap; }
 .review-result .bad { color: var(--danger); font-weight: 700; }
+
+.fixbox { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.fixbox h4 { margin: 0 0 6px; font-size: 14px; }
+.fixbox textarea { background: var(--panel); font-size: 13px; margin-bottom: 8px; }
+.fix-changes { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; }
+.fix-changes ul { margin: 6px 0 0; padding-left: 18px; }
+.fix-changes li { margin: 3px 0; }
+.fix-changes .skip { color: var(--muted); }

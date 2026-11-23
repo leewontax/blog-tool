@@ -222,6 +222,10 @@ function fillForm(p) {
   $("scheduledAt").value = p?.scheduledAt || "";
   $("naverUrl").value = p?.naverUrl || "";
   currentReview = p?.review || null;
+  fixUndo = null;
+  $("btnFixUndo").classList.add("hidden");
+  $("fixChanges").classList.add("hidden");
+  $("fixPaste").value = "";
   $("reviewPaste").value = "";
   renderReview();
   $("btnReviewToggle").textContent = "검증 결과 보기";
@@ -280,15 +284,16 @@ function cleanLine(t) {
 }
 
 function parseResult(text) {
-  const re = /===\s*(제목\s*후보|본문|해시태그)\s*===/g;
+  const re = /===\s*(제목\s*후보|본문|해시태그|수정\s*내역)\s*===/g;
   const marks = [...text.matchAll(re)];
-  if (!marks.length) return { body: text.trim(), titles: [], tags: [] };
-  const out = { titles: [], tags: [], body: "" };
+  if (!marks.length) return { body: text.trim(), titles: [], tags: [], changes: [] };
+  const out = { titles: [], tags: [], body: "", changes: [] };
   marks.forEach((m, i) => {
     const chunk = text.slice(m.index + m[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined).trim();
     const name = m[1].replace(/\s/g, "");
     if (name === "제목후보") out.titles = chunk.split("\n").map(cleanLine).filter((t) => t && !/^\(.*\)$/.test(t)).slice(0, 5);
     else if (name === "본문") out.body = chunk;
+    else if (name === "수정내역") out.changes = chunk.split("\n").map((l) => l.replace(/^\s*[-*•]\s*/, "").trim()).filter(Boolean);
     else out.tags = chunk.split(/[,#\n]/).map((t) => t.trim().replace(/\s+/g, "")).filter(Boolean).slice(0, 15);
   });
   return out;
@@ -383,6 +388,7 @@ function renderReview() {
   const badge = $("reviewBadge");
   const r = currentReview;
   $("btnReviewToggle").classList.toggle("hidden", !r);
+  $("fixBox").classList.toggle("hidden", !r);
   if (!r) {
     badge.textContent = "검증 안 함";
     badge.className = "pill draft";
@@ -422,6 +428,68 @@ async function saveReview() {
   await save();
   if (verdict === "판정 없음") toast("판정 문구를 찾지 못했습니다. 결과 내용을 직접 읽어 확인해 주세요.", 4000);
 }
+
+// 검증 결과 반영 수정본
+let fixUndo = null; // 수정본 적용 전 본문
+
+function renderFixChanges(changes) {
+  const box = $("fixChanges");
+  if (!changes.length) return box.classList.add("hidden");
+  const applied = changes.filter((c) => !/^\(?미반영/.test(c)).length;
+  box.innerHTML = `<b>수정 내역</b> (반영 ${applied}건 · 미반영 ${changes.length - applied}건)<ul>${changes
+    .map((c) => `<li class="${/^\(?미반영/.test(c) ? "skip" : ""}">${inline(c, false)}</li>`)
+    .join("")}</ul>`;
+  box.classList.remove("hidden");
+}
+
+$("btnFixCopy").onclick = () => {
+  if (!currentReview) return toast("먼저 2차 검증 결과를 저장해 주세요.");
+  if (currentReview.verdict === "발행 가능" && !currentReview.issues && !confirm("검증 판정이 '발행 가능'입니다. 그래도 수정본을 만들까요?")) return;
+  copyRequest("fix", {
+    title: $("title").value.trim(),
+    content: $("content").value,
+    reviewText: currentReview.text,
+    useStyle: $("useStyle").checked,
+  });
+};
+
+$("btnFixApply").onclick = async () => {
+  const text = $("fixPaste").value.trim();
+  if (!text) return toast("claude.ai 답변을 붙여넣어 주세요.");
+  const r = parseResult(text);
+  if (!r.changes.length && !/===\s*본문\s*===/.test(text) && !confirm("답변에서 '===본문===' 구분선을 찾지 못했습니다. 붙여넣은 내용 전체를 본문으로 바꿀까요?")) return;
+  const body = r.body.trim();
+  if (!body) return toast("수정본 본문이 비어 있습니다.");
+  const before = $("content").value;
+  if (body.length < before.trim().length * 0.6 && !confirm(`수정본이 원래 글보다 많이 짧습니다(원래 ${before.trim().length.toLocaleString()}자 → 수정본 ${body.length.toLocaleString()}자).\n일부가 빠졌을 수 있습니다. 그래도 적용할까요?`)) return;
+  if (!confirm("지금 본문을 수정본으로 바꿉니다. ('수정 전으로 되돌리기'로 되돌릴 수 있습니다)\n계속할까요?")) return;
+  fixUndo = before;
+  $("content").value = body;
+  $("fixPaste").value = "";
+  setMode("edit");
+  updateCounter();
+  renderReview(); // 검증 이후 본문 수정 경고 표시
+  renderFixChanges(r.changes);
+  $("btnFixUndo").classList.remove("hidden");
+  markDirty();
+  await save();
+  const left = (body.match(/\[확인 필요\]/g) || []).length;
+  toast(`수정본을 적용하고 저장했습니다.${left ? ` [확인 필요] ${left}곳이 남아 있습니다.` : ""} 수정 내역을 확인한 뒤, 가능하면 2차 검증을 한 번 더 해 주세요.`, 5500);
+};
+
+$("btnFixUndo").onclick = async () => {
+  if (fixUndo == null) return;
+  if (!confirm("수정본 적용 전 본문으로 되돌릴까요?")) return;
+  $("content").value = fixUndo;
+  fixUndo = null;
+  updateCounter();
+  renderReview();
+  $("btnFixUndo").classList.add("hidden");
+  $("fixChanges").classList.add("hidden");
+  markDirty();
+  await save();
+  toast("수정 전 본문으로 되돌렸습니다.");
+};
 
 $("btnReviewCopy").onclick = () => {
   const content = $("content").value;
