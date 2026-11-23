@@ -1,7 +1,7 @@
 ﻿# 블로그 글 도우미 실행 (start-blog-tool.bat 또는 바탕화면 아이콘이 이 파일을 실행합니다)
 # 1) 이미 켜져 있으면 브라우저만 엽니다.
 # 2) Node.js가 없거나 버전이 낮으면 안내 후 설치 페이지를 엽니다.
-# 3) 처음 실행이면 필요한 부품을 설치합니다(npm install).
+# 3) API 키(유료 방식)를 넣은 경우에만 AI 연결 부품을 설치합니다. 무료 방식은 설치 없이 바로 실행합니다.
 # 4) 프로그램을 최소화된 창으로 켜고, 준비되면 브라우저를 엽니다.
 
 $ErrorActionPreference = 'Stop'
@@ -48,15 +48,21 @@ if ($Major -lt 22) {
   exit 1
 }
 
-# 3) 처음 실행: 부품 설치
-if (-not (Test-Path -LiteralPath (Join-Path $AppDir 'node_modules\@anthropic-ai\sdk'))) {
+# 3) 부품 설치: API 키(유료 방식)를 넣은 경우에만 필요. 요청문 복사 방식(무료)은 설치 없이 바로 실행
+$HasKey = $false
+if (Test-Path -LiteralPath $EnvFile) {
+  foreach ($line in Get-Content -LiteralPath $EnvFile -Encoding UTF8) {
+    if ($line -match '^\s*ANTHROPIC_API_KEY\s*=\s*\S+') { $HasKey = $true }
+  }
+}
+if ($HasKey -and -not (Test-Path -LiteralPath (Join-Path $AppDir 'node_modules\@anthropic-ai\sdk\package.json'))) {
   Write-Host ''
-  Write-Host '  처음 실행 준비 중입니다. 필요한 부품을 설치합니다(1~2분)...'
+  Write-Host '  API 키가 있어 AI 연결 부품을 설치합니다(최대 3분)...'
   Write-Host ''
-  & npm.cmd install --no-audit --no-fund
-  if ($LASTEXITCODE -ne 0) {
-    Show-Msg "필요한 부품 설치에 실패했습니다.`n인터넷 연결을 확인한 뒤 아이콘을 다시 눌러 주세요." 'Error'
-    exit 1
+  $Npm = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', 'npm', 'install', '--no-audit', '--no-fund') -WorkingDirectory $AppDir -NoNewWindow -PassThru
+  if (-not $Npm.WaitForExit(180000)) {
+    try { $Npm.Kill() } catch {}
+    Show-Msg "AI 연결 부품 설치가 3분 넘게 끝나지 않아 중단했습니다.`n요청문 복사 방식(무료)으로 실행합니다." 'Warning'
   }
 }
 

@@ -5,7 +5,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import Anthropic from "@anthropic-ai/sdk";
 import { upcoming, weekday } from "./public/taxcal.js";
 import { buildAutoTopics } from "./topics-auto.js";
 
@@ -26,8 +25,19 @@ const OFFICIAL_DOMAINS = [
   "korea.kr",
 ];
 
+// API 키가 있을 때만 AI 연결 부품(SDK)을 불러옵니다.
+// 키가 없으면(요청문 복사 방식) 부품 설치(npm install) 없이 바로 실행됩니다.
 const hasKey = Boolean(process.env.ANTHROPIC_API_KEY);
-const client = hasKey ? new Anthropic() : null;
+let Anthropic = null;
+if (hasKey) {
+  try {
+    ({ default: Anthropic } = await import("@anthropic-ai/sdk"));
+  } catch {
+    console.log("\n  ⚠ API 키가 있지만 AI 연결 부품이 설치되어 있지 않습니다. 이 폴더에서 npm install 을 실행해 주세요.");
+    console.log("    (지금은 요청문 복사 방식으로 실행합니다)\n");
+  }
+}
+const client = Anthropic ? new Anthropic() : null;
 
 // ───────────────────────── 저장소 (data/*.json) ─────────────────────────
 
@@ -210,6 +220,7 @@ async function readBody(req, limit = 3_000_000) {
 }
 
 function apiErrorMessage(err) {
+  if (!Anthropic) return err.message || "알 수 없는 오류";
   if (err instanceof Anthropic.AuthenticationError) return "API 키가 올바르지 않습니다. .env 파일의 ANTHROPIC_API_KEY를 확인해 주세요.";
   if (err instanceof Anthropic.RateLimitError) return "요청이 많아 잠시 제한되었습니다. 1~2분 뒤 다시 시도해 주세요.";
   if (err instanceof Anthropic.APIConnectionError) return "AI 서버에 연결하지 못했습니다. 인터넷 연결을 확인해 주세요.";
@@ -1373,7 +1384,7 @@ async function serveStatic(req, res, pathname) {
 const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, "http://localhost");
   try {
-    if (pathname === "/api/status") return sendJson(res, 200, { aiReady: hasKey, model: MODEL });
+    if (pathname === "/api/status") return sendJson(res, 200, { aiReady: Boolean(client), model: MODEL });
     const aiRoutes = { "/api/draft": handleDraft, "/api/meta": handleMeta, "/api/style/analyze": handleStyleAnalyze };
     if (aiRoutes[pathname]) {
       if (req.method !== "POST") return sendJson(res, 405, { error: "POST만 가능" });
@@ -1430,7 +1441,7 @@ server.on("error", (err) => {
 server.listen(PORT, "127.0.0.1", async () => {
   console.log(`\n  블로그 글 작성 도우미 실행 중 → http://localhost:${PORT}`);
   console.log("  (이 창을 닫으면 프로그램이 꺼집니다. 최소화해 두세요.)\n");
-  if (hasKey) console.log("  ⚠ ANTHROPIC_API_KEY 가 설정되어 있어 AI 기능 사용 시 API 요금이 나옵니다.\n");
+  if (client) console.log("  ⚠ ANTHROPIC_API_KEY 가 설정되어 있어 AI 기능 사용 시 API 요금이 나옵니다.\n");
   // 시작할 때, 그리고 켜 둔 동안 1시간마다 오늘 백업이 있는지 확인
   const check = async () => {
     const r = await runBackup();
