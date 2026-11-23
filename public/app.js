@@ -274,6 +274,7 @@ async function draft() {
         templateGuide: tpl?.guide || "",
         length: Number($("length").value),
         webSearch: $("webSearch").checked,
+        useStyle: $("useStyle").checked,
       }),
     });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "요청 실패");
@@ -331,7 +332,7 @@ async function suggestMeta(auto = false) {
   btn.disabled = true;
   btn.textContent = "추천 받는 중…";
   try {
-    const { titles, tags } = await api("/api/meta", { method: "POST", body: { topic, content } });
+    const { titles, tags } = await api("/api/meta", { method: "POST", body: { topic, content, useStyle: $("useStyle").checked } });
     const box = $("titleSuggest");
     box.innerHTML = "";
     for (const t of titles) {
@@ -414,7 +415,7 @@ async function restore(file) {
     if (!confirm(`백업 파일로 복원합니다.\n글 ${data.posts?.length ?? 0}개, 템플릿 ${data.templates?.length ?? 0}개\n\n지금 저장된 글은 백업 내용으로 바뀝니다. (현재 상태는 data 폴더에 따로 보관됩니다)\n계속할까요?`)) return;
     await api("/api/backup", { method: "POST", body: data });
     toast("복원했습니다.");
-    await Promise.all([loadPosts(), loadTemplates()]);
+    await Promise.all([loadPosts(), loadTemplates(), loadSamples()]);
   } catch (e) {
     toast(e.message || "복원 실패", 3500);
   }
@@ -463,12 +464,167 @@ async function saveTemplate() {
   }
 }
 
+// ───────────── 내 글 학습 ─────────────
+
+let samples = [];
+let sampleCharLimit = 15000;
+let editingSample = null;
+
+async function loadSamples() {
+  const data = await api("/api/samples");
+  samples = data.samples;
+  sampleCharLimit = data.charLimit;
+  const style = await api("/api/style");
+  $("styleProfile").value = style.profile || "";
+  $("styleMeta").textContent = style.analyzedAt ? `분석: ${fmtDate(style.analyzedAt)} · 글 ${style.sampleCount ?? "?"}개 기준` : "";
+  renderSamples();
+}
+
+function usedSamples() {
+  // 서버와 같은 규칙: 최근 글부터, 분량 상한 안에서
+  const picked = [];
+  let total = 0;
+  for (const s of samples.filter((x) => x.use)) {
+    if (picked.length && total + s.content.length > sampleCharLimit) continue;
+    picked.push(s);
+    total += Math.min(s.content.length, sampleCharLimit);
+  }
+  return picked;
+}
+
+function renderSamples() {
+  const used = usedSamples();
+  const usedIds = new Set(used.map((s) => s.id));
+  $("sampleCount").textContent = samples.length ? `(${samples.length}개)` : "";
+  const skipped = samples.filter((s) => s.use && !usedIds.has(s.id)).length;
+  $("sampleUsage").textContent = samples.length
+    ? `글을 쓸 때 ${used.length}개가 예시로 쓰입니다.` + (skipped ? ` 분량 한도(약 ${sampleCharLimit.toLocaleString()}자)를 넘어 ${skipped}개는 빠집니다. 꼭 쓸 글만 '반영'을 켜 두세요.` : "")
+    : "";
+  $("sampleList").innerHTML = samples.length
+    ? samples
+        .map(
+          (s) => `<div class="tpl ${s.use ? "" : "off"}"><div class="tpl-top">
+            <b>${escapeHtml(s.title)}</b>
+            <span>
+              <label class="check"><input type="checkbox" data-use="${s.id}" ${s.use ? "checked" : ""}/> 반영${s.use && !usedIds.has(s.id) ? " (분량 초과로 제외)" : ""}</label>
+            </span></div>
+            <div class="muted small">${s.content.length.toLocaleString()}자 · 추가 ${fmtDate(s.createdAt)}</div>
+            <pre>${escapeHtml(s.content.slice(0, 180))}${s.content.length > 180 ? "…" : ""}</pre>
+            <div class="actions" style="margin-top:8px">
+              <button class="ghost small" data-sedit="${s.id}">수정</button>
+              <button class="ghost danger small" data-sdel="${s.id}">삭제</button>
+            </div></div>`
+        )
+        .join("")
+    : '<p class="muted">아직 추가한 글이 없습니다.</p>';
+  updateStyleToggle();
+}
+
+function updateStyleToggle() {
+  const n = usedSamples().length;
+  const hasProfile = $("styleProfile").value.trim().length > 0;
+  const ready = n > 0 || hasProfile;
+  const box = $("useStyle");
+  box.disabled = !ready;
+  if (!ready) box.checked = false;
+  else if (!updateStyleToggle.touched) box.checked = true;
+  $("styleInfo").textContent = ready
+    ? `내 글 ${n}개${hasProfile ? " + 말투 요약" : ""}을 참고합니다`
+    : "'내 글 학습'에 글을 추가하면 사용할 수 있습니다";
+}
+
+function editSample(s) {
+  editingSample = s?.id || null;
+  $("sampleFormTitle").textContent = s ? "글 수정" : "글 추가";
+  $("sampleTitle").value = s?.title || "";
+  $("sampleContent").value = s?.content || "";
+  $("btnSampleCancel").classList.toggle("hidden", !s);
+  updateSampleLen();
+  if (s) $("sampleTitle").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function updateSampleLen() {
+  const n = $("sampleContent").value.trim().length;
+  $("sampleLen").textContent = n ? `${n.toLocaleString()}자${n < 200 ? " — 200자 이상이어야 합니다" : ""}` : "";
+}
+
+async function saveSample() {
+  const body = { title: $("sampleTitle").value.trim(), content: $("sampleContent").value.trim() };
+  if (body.content.length < 200) return toast("본문을 200자 이상 넣어 주세요.");
+  if (/\d{6}\s*-\s*[1-4]\d{6}/.test(body.content) && !confirm("주민등록번호처럼 보이는 숫자가 있습니다. 지우지 않고 저장할까요?")) return;
+  try {
+    if (editingSample) await api(`/api/samples/${editingSample}`, { method: "PUT", body });
+    else await api("/api/samples", { method: "POST", body });
+    editSample(null);
+    await loadSamples();
+    toast("저장했습니다. 글을 추가·수정한 뒤에는 '말투 분석하기'를 다시 눌러 주세요.", 3500);
+  } catch (e) {
+    toast(e.message, 3500);
+  }
+}
+
+async function analyzeStyle() {
+  if (!usedSamples().length) return toast("'반영'으로 켜 둔 글이 없습니다.");
+  if ($("styleProfile").value.trim() && !confirm("지금 말투 요약을 새 분석 결과로 바꿉니다. 계속할까요?")) return;
+  const btn = $("btnAnalyze");
+  btn.disabled = true;
+  btn.textContent = "분석 중… (1분 정도)";
+  try {
+    const style = await api("/api/style/analyze", { method: "POST", body: {} });
+    $("styleProfile").value = style.profile;
+    $("styleMeta").textContent = `분석: ${fmtDate(style.analyzedAt)} · 글 ${style.sampleCount}개 기준`;
+    updateStyleToggle();
+    toast("말투 분석이 끝났습니다. 내용을 읽어 보고 필요하면 고친 뒤 '요약 저장'을 눌러 주세요.", 4000);
+  } catch (e) {
+    toast(e.message, 3500);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "말투 분석하기";
+  }
+}
+
+async function saveStyle() {
+  try {
+    await api("/api/style", { method: "PUT", body: { profile: $("styleProfile").value } });
+    updateStyleToggle();
+    toast("말투 요약을 저장했습니다.");
+  } catch (e) {
+    toast(e.message, 3500);
+  }
+}
+
+$("sampleContent").addEventListener("input", updateSampleLen);
+$("btnSampleSave").onclick = saveSample;
+$("btnSampleCancel").onclick = () => editSample(null);
+$("btnAnalyze").onclick = analyzeStyle;
+$("btnStyleSave").onclick = saveStyle;
+$("useStyle").addEventListener("change", () => (updateStyleToggle.touched = true));
+$("sampleList").onclick = async (e) => {
+  const ed = e.target.closest("[data-sedit]");
+  if (ed) return editSample(samples.find((s) => s.id === ed.dataset.sedit));
+  const del = e.target.closest("[data-sdel]");
+  if (del) {
+    const s = samples.find((x) => x.id === del.dataset.sdel);
+    if (!confirm(`"${s?.title}" 글을 학습 목록에서 삭제할까요?`)) return;
+    await api(`/api/samples/${del.dataset.sdel}`, { method: "DELETE" });
+    if (editingSample === del.dataset.sdel) editSample(null);
+    return loadSamples();
+  }
+};
+$("sampleList").onchange = async (e) => {
+  const box = e.target.closest("[data-use]");
+  if (!box) return;
+  await api(`/api/samples/${box.dataset.use}`, { method: "PUT", body: { use: box.checked } });
+  await loadSamples();
+};
+
 // ───────────── 화면 전환·연결 ─────────────
 
 function showView(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.view === name));
   document.querySelectorAll(".view").forEach((v) => v.classList.toggle("active", v.id === `view-${name}`));
   if (name === "list") loadPosts();
+  if (name === "samples") loadSamples();
 }
 
 document.querySelectorAll(".tab").forEach((t) => (t.onclick = () => showView(t.dataset.view)));
@@ -531,5 +687,6 @@ window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); 
     if (!s.aiReady) badge.title = "README의 '처음 한 번 설정'을 따라 .env에 API 키를 넣으세요.";
   } catch {}
   await loadTemplates();
+  await loadSamples();
   fillForm(null);
 })();

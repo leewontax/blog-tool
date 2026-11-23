@@ -50,7 +50,7 @@ mark { background: var(--warn); color: inherit; padding: 0 2px; border-radius: 3
 .view { display: none; }
 .view.active { display: grid; }
 #view-write { grid-template-columns: minmax(300px, 400px) 1fr; gap: 16px; padding: 16px; align-items: start; }
-#view-list, #view-templates { padding: 16px; }
+#view-list, #view-templates, #view-samples { padding: 16px; }
 @media (max-width: 900px) { #view-write { grid-template-columns: 1fr; } }
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; }
@@ -147,3 +147,10 @@ table.posts td.title { cursor: pointer; font-weight: 600; }
   opacity: 0; pointer-events: none; transition: all .2s; max-width: calc(100% - 32px);
 }
 .toast.show { opacity: 1; transform: translateX(-50%); }
+
+.tips { margin: 0 0 18px; padding-left: 20px; font-size: 14px; }
+.tips li { margin: 4px 0; }
+.style-box { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 22px; background: var(--bg); }
+.style-box textarea { background: var(--panel); margin-bottom: 10px; }
+.tpl.off { opacity: .55; }
+.tpl-top label.check { margin: 0; font-size: 13px; }

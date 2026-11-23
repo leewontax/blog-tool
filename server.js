@@ -95,6 +95,48 @@ const SYSTEM_PROMPT = `당신은 대한민국 세무사가 운영하는 네이�
 - 한 문단은 2~3문장으로 짧게 씁니다.
 - 마지막 줄에 "※ 이 글은 일반적인 안내이며, 개별 사실관계에 따라 결론이 달라질 수 있습니다."를 넣습니다.`;
 
+// ───────────────────────── 내 글 학습(말투 반영) ─────────────────────────
+// AI를 다시 훈련시키는 것이 아니라, 글을 쓸 때마다 세무사님 글을 예시로 함께 보여 주는 방식입니다.
+
+const SAMPLE_CHAR_LIMIT = 15000; // 한 번에 AI에 보여 줄 예시 글 분량 상한 (비용·속도 조절)
+
+async function activeSamples() {
+  const samples = await readStore("samples", []);
+  const picked = [];
+  let total = 0;
+  for (const s of samples.filter((x) => x.use).sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    if (picked.length && total + s.content.length > SAMPLE_CHAR_LIMIT) continue;
+    picked.push(s.content.length > SAMPLE_CHAR_LIMIT ? { ...s, content: s.content.slice(0, SAMPLE_CHAR_LIMIT) } : s);
+    total += Math.min(s.content.length, SAMPLE_CHAR_LIMIT);
+  }
+  return picked;
+}
+
+async function styleSystemBlock() {
+  const style = await readStore("style", { profile: "" });
+  const samples = await activeSamples();
+  if (!style.profile.trim() && !samples.length) return null;
+  const parts = [
+    "아래는 이 블로그 주인(세무사)이 직접 쓴 글의 말투와 형식입니다. 새 글은 이 사람이 직접 쓴 것처럼 써 주세요.",
+    "따라 할 것: 말투(존댓말 수준, 어미), 인사말·맺음말, 문단 길이, 소제목 붙이는 방식, 강조·목록·이모지 사용 습관, 글 구성 순서.",
+    "따라 하지 말 것: 예시 글에 나온 세법 내용·세율·금액·기한·조문. 예전 글이라 지금 법령과 다를 수 있으므로 사실관계는 작성 원칙에 따라 새로 판단하고, 불확실하면 [확인 필요]로 표시하세요.",
+    "출력 문법(## 소제목, **굵게**, - 목록)과 마지막 안내 문장은 작성 원칙을 그대로 따르세요. 예시 글에 고유한 맺음말이 있으면 그 맺음말을 쓰고 그 아래에 안내 문장을 붙이세요.",
+  ];
+  if (style.profile.trim()) parts.push(`<말투_요약>\n${style.profile.trim()}\n</말투_요약>`);
+  samples.forEach((s, i) => parts.push(`<예시_글 번호="${i + 1}" 제목="${s.title.replace(/"/g, "'")}">\n${s.content}\n</예시_글>`));
+  // 같은 예시 글을 반복해서 보낼 때 요금이 줄도록 캐시 지정
+  return { type: "text", text: parts.join("\n\n"), cache_control: { type: "ephemeral" } };
+}
+
+async function systemBlocks(useStyle) {
+  const blocks = [{ type: "text", text: SYSTEM_PROMPT }];
+  if (useStyle) {
+    const style = await styleSystemBlock();
+    if (style) blocks.push(style);
+  }
+  return blocks;
+}
+
 function draftPrompt({ topic, audience, memo, templateGuide, length }) {
   return [
     `주제: ${topic}`,
@@ -192,6 +234,8 @@ async function handleDraft(req, res) {
 
   const messages = [{ role: "user", content: draftPrompt(body) }];
   try {
+    const system = await systemBlocks(body.useStyle);
+    if (body.useStyle && system.length > 1) send({ type: "status", text: "내 말투를 반영해 작성 중…" });
     // 웹검색을 쓰면 서버가 중간에 멈추고(pause_turn) 이어 쓰기를 요청할 수 있어 몇 번 반복
     for (let turn = 0; turn < 4; turn++) {
       const stream = client.beta.messages.stream({
@@ -201,7 +245,7 @@ async function handleDraft(req, res) {
         output_config: { effort: "high" },
         betas: [FALLBACK_BETA],
         fallbacks: "default",
-        system: SYSTEM_PROMPT,
+        system,
         messages,
         ...(tools ? { tools } : {}),
       });
@@ -245,6 +289,7 @@ async function handleMeta(req, res) {
   const body = await readBody(req);
   if (!body.content?.trim() && !body.topic?.trim()) return sendJson(res, 400, { error: "주제나 본문이 필요합니다." });
   try {
+    const style = body.useStyle ? (await readStore("style", { profile: "" })).profile.trim() : "";
     const message = await client.beta.messages.create({
       model: MODEL,
       max_tokens: 4000,
@@ -256,7 +301,9 @@ async function handleMeta(req, res) {
       messages: [
         {
           role: "user",
-          content: `주제: ${body.topic || "(본문 참고)"}\n\n본문:\n${(body.content || "").slice(0, 12000)}`,
+          content:
+            `주제: ${body.topic || "(본문 참고)"}\n\n본문:\n${(body.content || "").slice(0, 12000)}` +
+            (style ? `\n\n블로그 주인의 말투 요약(제목 스타일도 이에 맞춰 주세요):\n${style.slice(0, 3000)}` : ""),
         },
       ],
     });
@@ -352,6 +399,103 @@ async function handleTemplates(req, res, id) {
   sendJson(res, 405, { error: "지원하지 않는 요청" });
 }
 
+// 내 글 샘플 저장
+async function handleSamples(req, res, id) {
+  const samples = await readStore("samples", []);
+  if (req.method === "GET" && !id) {
+    samples.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return sendJson(res, 200, { samples, charLimit: SAMPLE_CHAR_LIMIT });
+  }
+  if (req.method === "POST" && !id) {
+    const b = await readBody(req);
+    const content = String(b.content || "").trim();
+    if (content.length < 200) return sendJson(res, 400, { error: "본문이 너무 짧습니다. 200자 이상인 글을 넣어 주세요." });
+    const sample = {
+      id: randomUUID(),
+      title: String(b.title || "").trim().slice(0, 200) || content.split("\n")[0].slice(0, 40),
+      content,
+      use: true,
+      createdAt: new Date().toISOString(),
+    };
+    samples.push(sample);
+    await writeStore("samples", samples);
+    return sendJson(res, 201, sample);
+  }
+  const idx = samples.findIndex((s) => s.id === id);
+  if (idx < 0) return sendJson(res, 404, { error: "글을 찾을 수 없습니다." });
+  if (req.method === "PUT") {
+    const b = await readBody(req);
+    const s = samples[idx];
+    if (b.title !== undefined) s.title = String(b.title).trim().slice(0, 200) || s.title;
+    if (b.content !== undefined && String(b.content).trim().length >= 200) s.content = String(b.content).trim();
+    if (b.use !== undefined) s.use = Boolean(b.use);
+    await writeStore("samples", samples);
+    return sendJson(res, 200, s);
+  }
+  if (req.method === "DELETE") {
+    samples.splice(idx, 1);
+    await writeStore("samples", samples);
+    return sendJson(res, 200, { ok: true });
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
+// 말투 요약 보기·저장
+async function handleStyle(req, res) {
+  if (req.method === "GET") return sendJson(res, 200, await readStore("style", { profile: "", analyzedAt: "" }));
+  if (req.method === "PUT") {
+    const b = await readBody(req);
+    const prev = await readStore("style", { profile: "", analyzedAt: "" });
+    const style = { ...prev, profile: String(b.profile || "").slice(0, 6000), updatedAt: new Date().toISOString() };
+    await writeStore("style", style);
+    return sendJson(res, 200, style);
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
+}
+
+// AI가 내 글을 읽고 말투·형식 특징을 정리
+async function handleStyleAnalyze(req, res) {
+  const samples = await activeSamples();
+  if (!samples.length) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
+  try {
+    const message = await client.beta.messages.create({
+      model: MODEL,
+      max_tokens: 8000,
+      output_config: { effort: "medium" },
+      betas: [FALLBACK_BETA],
+      fallbacks: "default",
+      system:
+        "당신은 글쓰기 문체 분석가입니다. 주어진 블로그 글들의 공통된 말투와 형식만 분석합니다. 세법 내용이나 수치는 분석 대상이 아닙니다.",
+      messages: [
+        {
+          role: "user",
+          content:
+            samples.map((s, i) => `<글 번호="${i + 1}">\n${s.content}\n</글>`).join("\n\n") +
+            `\n\n위 글들을 쓴 사람과 똑같은 말투로 새 글을 쓰려는 작가에게 줄 '말투 지침'을 작성해 주세요.
+다음 항목별로 짧은 글머리표로, 실제 글에서 가져온 짧은 표현 예시를 따옴표로 곁들여 주세요.
+1. 말투·어미 (예: ~습니다/~해요, 독자를 부르는 호칭)
+2. 시작 인사와 맺음말
+3. 글 구성 순서
+4. 소제목 스타일
+5. 문단 길이·줄바꿈 습관
+6. 강조·목록·표·이모지·기호 사용
+7. 자주 쓰는 표현
+8. 피하는 표현이나 특징
+글 수가 적어 판단하기 어려운 항목은 "판단 어려움"이라고 적어 주세요. 전체 1,500자 이내로 써 주세요. 고객 이름 등 개인정보는 옮겨 적지 마세요.`,
+        },
+      ],
+    });
+    const refused = refusalMessage(message);
+    if (refused) return sendJson(res, 422, { error: refused });
+    const style = { profile: textOf(message).trim(), analyzedAt: new Date().toISOString(), sampleCount: samples.length };
+    await writeStore("style", style);
+    sendJson(res, 200, style);
+  } catch (err) {
+    console.error(err);
+    sendJson(res, 502, { error: apiErrorMessage(err) });
+  }
+}
+
 // 전체 백업 / 복원
 async function handleBackup(req, res) {
   if (req.method === "GET") {
@@ -359,6 +503,8 @@ async function handleBackup(req, res) {
       exportedAt: new Date().toISOString(),
       posts: await readStore("posts", []),
       templates: await readStore("templates", DEFAULT_TEMPLATES),
+      samples: await readStore("samples", []),
+      style: await readStore("style", { profile: "" }),
     };
     res.writeHead(200, {
       "Content-Type": "application/json; charset=utf-8",
@@ -371,7 +517,22 @@ async function handleBackup(req, res) {
     if (!Array.isArray(b.posts) || !Array.isArray(b.templates)) return sendJson(res, 400, { error: "백업 파일 형식이 아닙니다." });
     // 복원 전 현재 상태를 따로 저장해 두어 되돌릴 수 있게 함
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    await writeStore(`before-restore-${stamp}`, { posts: await readStore("posts", []), templates: await readStore("templates", DEFAULT_TEMPLATES) });
+    await writeStore(`before-restore-${stamp}`, {
+      posts: await readStore("posts", []),
+      templates: await readStore("templates", DEFAULT_TEMPLATES),
+      samples: await readStore("samples", []),
+      style: await readStore("style", { profile: "" }),
+    });
+    // 예전 백업 파일에는 내 글·말투가 없을 수 있음 → 그때는 기존 것을 그대로 둠
+    if (Array.isArray(b.samples)) {
+      await writeStore(
+        "samples",
+        b.samples
+          .filter((s) => s && typeof s.content === "string" && s.content.trim())
+          .map((s) => ({ id: s.id || randomUUID(), title: String(s.title || ""), content: s.content, use: s.use !== false, createdAt: s.createdAt || new Date().toISOString() }))
+      );
+    }
+    if (b.style && typeof b.style.profile === "string") await writeStore("style", b.style);
     await writeStore("posts", b.posts.map((p) => cleanPost(p, { id: p.id, createdAt: p.createdAt })));
     await writeStore("templates", b.templates.filter((t) => t && t.name).map((t) => ({ id: t.id || randomUUID(), name: String(t.name), guide: String(t.guide || "") })));
     return sendJson(res, 200, { ok: true });
@@ -398,11 +559,15 @@ const server = http.createServer(async (req, res) => {
   const { pathname } = new URL(req.url, "http://localhost");
   try {
     if (pathname === "/api/status") return sendJson(res, 200, { aiReady: hasKey, model: MODEL });
-    if (pathname === "/api/draft" || pathname === "/api/meta") {
+    const aiRoutes = { "/api/draft": handleDraft, "/api/meta": handleMeta, "/api/style/analyze": handleStyleAnalyze };
+    if (aiRoutes[pathname]) {
       if (req.method !== "POST") return sendJson(res, 405, { error: "POST만 가능" });
       if (!client) return sendJson(res, 503, { error: "AI 키가 설정되지 않았습니다. README의 '처음 한 번 설정'을 따라 .env 파일에 ANTHROPIC_API_KEY를 넣어 주세요." });
-      return pathname === "/api/draft" ? await handleDraft(req, res) : await handleMeta(req, res);
+      return await aiRoutes[pathname](req, res);
     }
+    const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
+    if (sampleMatch) return await handleSamples(req, res, sampleMatch[1]);
+    if (pathname === "/api/style") return await handleStyle(req, res);
     const postMatch = pathname.match(/^\/api\/posts(?:\/([\w-]+))?$/);
     if (postMatch) return await handlePosts(req, res, postMatch[1]);
     const tplMatch = pathname.match(/^\/api\/templates(?:\/([\w-]+))?$/);
