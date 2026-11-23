@@ -382,16 +382,15 @@ function cleanImages(list) {
     .slice(0, 8);
 }
 
-const THUMB_PRESETS = ["bottom", "center", "top"];
+// 대표 이미지: ChatGPT가 제목까지 넣어 그린 그림 + 글자 확인 여부
 function cleanThumb(t) {
   if (!t || typeof t !== "object") return null;
   return {
     title: String(t.title || "").slice(0, 120),
     sub: String(t.sub || "").slice(0, 80),
     office: String(t.office || "").slice(0, 40),
-    preset: THUMB_PRESETS.includes(t.preset) ? t.preset : "bottom",
     bgFile: /^[\w-]+-bg\.(png|jpg|webp)$/.test(t.bgFile || "") ? t.bgFile : "",
-    bandColor: /^#[0-9a-f]{6}$/i.test(t.bandColor || "") ? t.bandColor : "",
+    textOk: Boolean(t.textOk),
   };
 }
 
@@ -454,7 +453,7 @@ async function handlePosts(req, res, id, sub) {
     for (const ext of Object.values(IMAGE_TYPES)) await fs.rm(path.join(IMAGE_DIR, `${id}-bg.${ext}`), { force: true });
     const file = `${id}-bg.${IMAGE_TYPES[m[1]]}`;
     await fs.writeFile(path.join(IMAGE_DIR, file), buf);
-    posts[idx].thumb = { ...(cleanThumb(posts[idx].thumb) || cleanThumb({})), bgFile: file };
+    posts[idx].thumb = { ...(cleanThumb(posts[idx].thumb) || cleanThumb({})), bgFile: file, textOk: false };
     posts[idx].updatedAt = new Date().toISOString();
     await writeStore("posts", posts);
     return sendJson(res, 200, { bgFile: file });
@@ -1143,31 +1142,34 @@ ${String(body.content || "")}
 ${checksText(body.checks)}`;
 }
 
-// 대표 이미지 요청문 (ChatGPT 이미지 생성)
+// 대표 이미지 요청문 (ChatGPT 이미지 생성) — 제목 글자까지 그림 안에 넣기
 function buildThumbRequest(body, style) {
   const mine = body.useImgStyle ? imgStyleBlock(style?.thumb, "대표 이미지") : "";
-  const withText = body.withText === true;
-  const title = String(body.title || body.topic || "").trim();
-  return `네이버 블로그 대표 이미지(썸네일)를 만들어 주세요. 이미지 생성 기능으로 그림 한 장을 만들어 주세요.
+  const lines = String(body.thumbTitle || body.title || body.topic || "").split("\n").map((t) => t.trim()).filter(Boolean);
+  const sub = String(body.sub || "").trim();
+  const office = String(body.office || "").trim();
+  const quote = (t) => `「${t}」`;
+  return `네이버 블로그 대표 이미지(썸네일)를 그려 주세요. 이미지 생성 기능으로 그림 한 장을 만들어 주세요.
 
-[글 정보]
-- 블로그 성격: 대한민국 세무사가 운영하는 세금 정보 블로그
-- 글 제목: ${title || "(제목 없음)"}
-${body.topic && body.topic !== title ? `- 주제: ${body.topic}
-` : ""}
+[블로그 정보]
+- 대한민국 세무사가 운영하는 세금 정보 블로그
+${body.topic ? `- 글 주제: ${body.topic}\n` : ""}
+[그림 안에 넣을 글자 — 가장 중요]
+- 제목${lines.length > 1 ? `(${lines.length}줄, 이 줄바꿈 그대로)` : ""}:
+${lines.map((l) => `  ${quote(l)}`).join("\n")}
+${sub ? `- 작은 글씨(제목 위나 아래에 작게): ${quote(sub)}\n` : ""}${office ? `- 사무소명(구석에 작게): ${quote(office)}\n` : ""}- 「 」 안의 글자를 맞춤법·띄어쓰기·숫자·기호까지 한 글자도 바꾸지 말고 그대로 넣어 주세요. 「 」 기호 자체는 넣지 마세요.
+- 위 글자 외에 다른 글자·숫자·영어는 넣지 마세요.
+- 제목은 크고 굵게, 배경과 대비가 뚜렷해 휴대폰 작은 화면에서도 잘 읽히게 해 주세요.
+- 한글이 깨지거나 틀리면 그 그림은 쓰지 말고 다시 만들어 주세요.
+
 [그림 조건]
 - 정사각형(1:1), 고해상도
 ${mine
-  ? "- 그림체·색감·구도·분위기: 아래 [내 대표 이미지 스타일]을 따라 주세요. 기존 대표 이미지들과 한 묶음처럼 보이게 해 주세요."
+  ? "- 그림체·색감·구도·글자 배치·분위기: 아래 [내 대표 이미지 스타일]을 따라 주세요. 기존 대표 이미지들과 한 묶음처럼 보이게 해 주세요."
   : `- 깔끔하고 신뢰감 있는 전문가 블로그 느낌. 과장되거나 유치한 느낌은 피해 주세요.
 - 색감: 초록(#03a94d) 계열을 중심으로 흰색·짙은 남색을 곁들인 밝고 단정한 색`}
 - 글 주제와 어울리는 소재를 단순하게 표현 (예: 서류, 계산기, 달력, 집·토지, 동전, 체크리스트 등 주제에 맞게)
 - 실존 인물·유명인 얼굴, 회사 로고·상표, 워터마크는 넣지 마세요.
-${withText
-  ? `- 그림 아래쪽에 다음 글자를 크고 또렷하게 넣어 주세요(맞춤법 그대로, 글자 하나도 바꾸지 말 것): "${title}"
-- 한글이 깨지거나 틀리면 다시 만들어 주세요.`
-  : `- 그림 안에 글자·숫자·기호를 절대 넣지 마세요. (제목 글자는 제가 따로 얹습니다)
-- 아래쪽 3분의 1은 제목 글자를 얹을 수 있도록 단순한 배경(복잡한 무늬 없이)으로 비워 주세요.${mine ? " 스타일 지침에 글자 영역 위치가 다르게 나와 있으면 그 위치를 비워 주세요." : ""}`}
 ${mine ? `\n${mine}` : ""}`;
 }
 
@@ -1268,7 +1270,7 @@ async function handlePromptRequest(req, res, kind) {
     if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문을 먼저 완성해 주세요." });
     text = buildBodyImagesRequest(body, await readImgStyle());
   } else if (kind === "thumb") {
-    if (!String(body.title || body.topic || "").trim()) return sendJson(res, 400, { error: "제목을 먼저 입력해 주세요." });
+    if (!String(body.thumbTitle || body.title || body.topic || "").trim()) return sendJson(res, 400, { error: "제목을 먼저 입력해 주세요." });
     text = buildThumbRequest(body, await readImgStyle());
   } else if (kind === "imgstyle-body" || kind === "imgstyle-thumb") {
     const k = kind.split("-")[1];
@@ -1504,7 +1506,7 @@ ${pal}
 2. 색감과 밝기
 3. 구도 (소재의 위치·크기, 여백)
 4. 배경
-5. 제목 글자 영역 (위치, 띠·상자 모양, 색) — 실제 글자 내용은 적지 말 것
+5. 제목 글자 (위치, 크기, 굵기, 글꼴 느낌, 글자 색, 띠·상자·테두리 여부) — 실제 글자 내용은 적지 말 것
 6. 자주 쓰는 소재
 7. 분위기
 8. 피해야 할 것

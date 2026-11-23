@@ -353,3 +353,13 @@ label.check.inline { display: inline-flex; margin: 0 8px 4px 0; font-size: 13px;
 button.swatch { cursor: pointer; font-weight: 500; }
 button.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .is-sec textarea { margin-bottom: 8px; }
+
+/* 대표 이미지 (ChatGPT 제목 포함) */
+.thumb-drop { min-height: 220px; display: flex; align-items: center; justify-content: center; }
+.thumb-drop img { display: block; width: 100%; height: auto; border-radius: 6px; }
+.thumb-empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 8px; }
+.thumb-compare { margin: 8px 0; padding: 8px 10px; border-radius: 8px; background: var(--warn); }
+.thumb-expect { font-size: 18px; font-weight: 800; line-height: 1.4; white-space: pre-line; color: #1d2320; }
+.thumb-expect small { display: block; font-size: 13px; font-weight: 600; color: #3d4642; }
+.thumb-wrap { grid-template-columns: 1fr minmax(220px, 360px); }
+@media (max-width: 700px) { .thumb-wrap { grid-template-columns: 1fr; } }

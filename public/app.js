@@ -162,6 +162,7 @@ async function copyBody() {
   if (left && !confirm(`본문에 [확인 필요] 표시가 ${left}곳 있습니다.\n복사할 때 이 표시는 자동으로 빠지지만, 그 문장의 내용이 비어 있거나 어색할 수 있습니다.\n먼저 해당 문장을 고치시는 것을 권합니다.\n\n그래도 복사할까요?`)) return;
   const open = currentChecks.filter((c) => !c.done);
   if (open.length && !confirm(`발행 전 확인할 내용 중 ${open.length}개를 아직 체크하지 않았습니다.\n- ${open.slice(0, 5).map((c) => c.text).join("\n- ")}${open.length > 5 ? "\n…" : ""}\n\n그래도 본문을 복사할까요?`)) return;
+  if (currentThumb?.bgFile && !currentThumb.textOk && !confirm("대표 이미지 속 글자를 제목과 비교해 확인하지 않았습니다.\n(한글 오탈자가 있을 수 있습니다)\n\n그래도 본문을 복사할까요?")) return;
   const slots = md.split("\n").filter((l) => MARKER_RE.test(l)).length;
   const reviewNote = reviewStatusNote();
   if (reviewNote && !confirm(`${reviewNote}\n\n그래도 본문을 복사할까요?`)) return;
@@ -502,7 +503,6 @@ $("checkNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.pr
 
 let currentImages = []; // 본문 이미지 [{n, place, alt, svg}]
 let currentThumb = null; // 대표 이미지 설정 {title, sub, office, preset, bgFile}
-let thumbBg = null; // 배경 그림(Image)
 const FONT = '"Malgun Gothic","Apple SD Gothic Neo","Noto Sans KR",sans-serif';
 
 function svgUrl(svg) {
@@ -682,17 +682,29 @@ $("bodyImgList").onclick = async (e) => {
   }
 };
 
-// ── 대표 이미지 (ChatGPT 배경 + 앱이 제목 얹기) ──
+// ── 대표 이미지 (ChatGPT가 제목 글자까지 넣은 그림) ──
 
 function thumbState() {
   return {
     title: $("thumbTitle").value,
     sub: $("thumbSub").value,
     office: $("thumbOffice").value,
-    preset: $("thumbPreset").value,
     bgFile: currentThumb?.bgFile || "",
-    bandColor: currentThumb?.bandColor || "",
+    textOk: Boolean(currentThumb?.textOk),
   };
+}
+
+function thumbTitleText() {
+  return $("thumbTitle").value.trim() || $("title").value.trim();
+}
+
+function renderThumbExpect() {
+  const t = thumbTitleText();
+  const sub = $("thumbSub").value.trim();
+  const office = $("thumbOffice").value.trim();
+  $("thumbExpect").innerHTML = t
+    ? `${escapeHtml(t)}${sub ? `<small>작은 글씨: ${escapeHtml(sub)}</small>` : ""}${office ? `<small>사무소명: ${escapeHtml(office)}</small>` : ""}`
+    : "<small>제목을 입력해 주세요</small>";
 }
 
 function loadThumbFields() {
@@ -701,148 +713,44 @@ function loadThumbFields() {
   $("thumbTitle").value = currentThumb?.title || "";
   $("thumbSub").value = currentThumb?.sub || "";
   $("thumbOffice").value = currentThumb?.office ?? office;
-  $("thumbPreset").value = currentThumb?.preset || "bottom";
-  renderBandSwatches();
+  $("thumbTextOk").checked = Boolean(currentThumb?.textOk);
+  renderThumbExpect();
 }
 
 function loadThumbBg() {
-  thumbBg = null;
   const file = currentThumb?.bgFile;
-  if (!file) return drawThumb();
-  const img = new Image();
-  img.onload = () => { thumbBg = img; drawThumb(); };
-  img.onerror = () => drawThumb();
-  img.src = `/api/images/${file}?t=${Date.now()}`;
-  drawThumb();
-}
-
-// 글자를 정해진 너비 안에 줄바꿈 (Enter로 나눈 줄은 그대로 지킴)
-function wrapLines(ctx, text, maxW) {
-  const out = [];
-  for (const para of text.split("\n").map((t) => t.trim()).filter(Boolean)) {
-    let line = "";
-    for (const word of para.split(/\s+/)) {
-      const test = line ? `${line} ${word}` : word;
-      if (ctx.measureText(test).width <= maxW) line = test;
-      else if (!line) {
-        // 한 단어가 너무 길면 글자 단위로
-        let part = "";
-        for (const ch of word) {
-          if (ctx.measureText(part + ch).width > maxW && part) { out.push(part); part = ch; } else part += ch;
-        }
-        line = part;
-      } else { out.push(line); line = word; }
-    }
-    if (line) out.push(line);
-  }
-  return out;
-}
-
-function fitText(ctx, text, maxW, maxLines, start, min) {
-  for (let size = start; size >= min; size -= 2) {
-    ctx.font = `bold ${size}px ${FONT}`;
-    const lines = wrapLines(ctx, text, maxW);
-    if (lines.length <= maxLines) return { size, lines };
-  }
-  ctx.font = `bold ${min}px ${FONT}`;
-  const all = wrapLines(ctx, text, maxW);
-  return { size: min, lines: all.slice(0, maxLines), cut: all.length > maxLines };
-}
-
-function thumbWarn(cut) {
-  if (cut === undefined) return;
-  $("thumbWarn").classList.toggle("hidden", !cut);
-}
-
-function drawThumb(canvas = $("thumbCanvas"), scale = 1) {
-  const S = 1080 * scale;
-  canvas.width = S;
-  canvas.height = S;
-  const ctx = canvas.getContext("2d");
-  const k = scale;
-  // 배경
-  if (thumbBg) {
-    const r = Math.max(S / thumbBg.width, S / thumbBg.height);
-    const w = thumbBg.width * r, h = thumbBg.height * r;
-    ctx.drawImage(thumbBg, (S - w) / 2, (S - h) / 2, w, h);
+  const img = $("thumbImg");
+  if (file) {
+    img.src = `/api/images/${file}?t=${Date.now()}`;
+    img.hidden = false;
   } else {
-    const g = ctx.createLinearGradient(0, 0, S, S);
-    g.addColorStop(0, "#04b456");
-    g.addColorStop(1, "#02743a");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, S, S);
-    ctx.fillStyle = "rgba(255,255,255,0.07)";
-    for (const [x, y, rad] of [[0.85, 0.15, 0.28], [0.1, 0.9, 0.22], [0.95, 0.75, 0.12]]) {
-      ctx.beginPath(); ctx.arc(x * S, y * S, rad * S, 0, Math.PI * 2); ctx.fill();
-    }
+    img.hidden = true;
+    img.removeAttribute("src");
   }
-  const st = thumbState();
-  const title = (st.title.trim() || $("title").value.trim() || "대표 이미지 제목").replace(/\r/g, "");
-  const pad = 72 * k;
-  ctx.textBaseline = "top";
-
-  if (st.preset === "center") {
-    const boxW = S * 0.84;
-    const inner = boxW - 2 * 56 * k;
-    const t = fitText(ctx, title, inner, 4, 92 * k, 50 * k);
-    if (scale === 1) thumbWarn(Boolean(t.cut));
-    const lineH = t.size * 1.28;
-    const subH = st.sub ? 44 * k + 22 * k : 0;
-    const offH = st.office ? 40 * k : 0;
-    const boxH = 56 * k * 2 + t.lines.length * lineH + subH + offH;
-    const x0 = (S - boxW) / 2, y0 = (S - boxH) / 2;
-    ctx.fillStyle = "rgba(255,255,255,0.96)";
-    roundRect(ctx, x0, y0, boxW, boxH, 28 * k); ctx.fill();
-    const accent = st.bandColor || "#03a94d";
-    const accentText = luminance(accent) > 0.6 ? "#1d2320" : accent;
-    ctx.fillStyle = accent;
-    roundRect(ctx, x0, y0, boxW, 14 * k, 7 * k); ctx.fill();
-    ctx.textAlign = "center";
-    let y = y0 + 56 * k;
-    if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = accentText; ctx.fillText(st.sub, S / 2, y, inner); y += 44 * k + 22 * k; }
-    ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = "#1d2320";
-    for (const l of t.lines) { ctx.fillText(l, S / 2, y); y += lineH; }
-    if (st.office) { ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = "#6b746f"; ctx.fillText(st.office, S / 2, y + 6 * k, inner); }
-    return canvas;
-  }
-
-  const top = st.preset === "top";
-  const bandH = S * 0.42;
-  const y0 = top ? 0 : S - bandH;
-  const band = st.bandColor ? hexToRgba(st.bandColor, 0.92) : top ? "rgba(3,169,77,0.93)" : "rgba(13,38,29,0.88)";
-  const light = st.bandColor && luminance(st.bandColor) > 0.6; // 밝은 띠면 어두운 글자
-  ctx.fillStyle = band;
-  ctx.fillRect(0, y0, S, bandH);
-  const t = fitText(ctx, title, S - 2 * pad, 3, 96 * k, 54 * k);
-  if (scale === 1) thumbWarn(Boolean(t.cut));
-  const lineH = t.size * 1.25;
-  const subH = st.sub ? 40 * k + 18 * k : 0;
-  const blockH = subH + t.lines.length * lineH;
-  let y = y0 + (bandH - blockH) / 2 - (st.office ? 12 * k : 0);
-  ctx.textAlign = "left";
-  if (st.sub) { ctx.font = `bold ${36 * k}px ${FONT}`; ctx.fillStyle = light ? "#3d4642" : st.bandColor ? "rgba(255,255,255,0.85)" : top ? "#e6f6ec" : "#7fe0a8"; ctx.fillText(st.sub, pad, y, S - 2 * pad); y += subH; }
-  ctx.font = `bold ${t.size}px ${FONT}`; ctx.fillStyle = light ? "#1d2320" : "#ffffff";
-  for (const l of t.lines) { ctx.fillText(l, pad, y); y += lineH; }
-  if (st.office) {
-    ctx.font = `${30 * k}px ${FONT}`; ctx.fillStyle = light ? "rgba(29,35,32,0.75)" : "rgba(255,255,255,0.8)"; ctx.textAlign = "right";
-    ctx.fillText(st.office, S - pad, y0 + bandH - 30 * k - 24 * k);
-  }
-  return canvas;
+  $("thumbEmpty").hidden = Boolean(file);
+  $("thumbCheckRow").classList.toggle("hidden", !file);
 }
 
-function roundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+async function thumbFileBlob() {
+  const file = currentThumb?.bgFile;
+  if (!file) throw new Error("대표 이미지 그림이 없습니다. ChatGPT 그림을 먼저 넣어 주세요.");
+  const res = await fetch(`/api/images/${file}`);
+  if (!res.ok) throw new Error("그림을 불러오지 못했습니다.");
+  return res.blob();
 }
 
-function thumbPngBlob() {
-  const c = drawThumb(document.createElement("canvas"), 2);
-  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("이미지 만들기 실패"))), "image/png"));
+// 클립보드에는 PNG만 넣을 수 있어 변환
+async function thumbPngBlob() {
+  const blob = await thumbFileBlob();
+  if (blob.type === "image/png") return blob;
+  const url = URL.createObjectURL(blob);
+  const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("그림을 열지 못했습니다.")); i.src = url; });
+  URL.revokeObjectURL(url);
+  const c = document.createElement("canvas");
+  c.width = img.width;
+  c.height = img.height;
+  c.getContext("2d").drawImage(img, 0, 0);
+  return new Promise((resolve, reject) => c.toBlob((b) => (b ? resolve(b) : reject(new Error("변환 실패"))), "image/png"));
 }
 
 async function setThumbBgFromFile(file) {
@@ -857,45 +765,60 @@ async function setThumbBgFromFile(file) {
     fr.onerror = () => reject(new Error("그림을 읽지 못했습니다."));
     fr.readAsDataURL(file);
   });
-  // 너무 크면 줄여서 저장(2400px)
-  const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("그림을 열지 못했습니다.")); i.src = dataUrl; });
+  // 원본 그대로 보관 (12MB가 넘으면 3000px로 줄임 — 글자가 흐려지지 않도록 넉넉하게)
   let upload = dataUrl;
-  if (Math.max(img.width, img.height) > 2400 || file.size > 8_000_000) {
-    const r = 2400 / Math.max(img.width, img.height);
+  if (file.size > 12_000_000) {
+    const img = await new Promise((resolve, reject) => { const i = new Image(); i.onload = () => resolve(i); i.onerror = () => reject(new Error("그림을 열지 못했습니다.")); i.src = dataUrl; });
+    const r = Math.min(1, 3000 / Math.max(img.width, img.height));
     const c = document.createElement("canvas");
-    c.width = Math.round(img.width * Math.min(1, r));
-    c.height = Math.round(img.height * Math.min(1, r));
+    c.width = Math.round(img.width * r);
+    c.height = Math.round(img.height * r);
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    upload = c.toDataURL("image/jpeg", 0.92);
+    upload = c.toDataURL("image/jpeg", 0.95);
   }
   try {
     const { bgFile } = await api(`/api/posts/${currentId}/thumbbg`, { method: "PUT", body: { dataUrl: upload } });
-    currentThumb = { ...thumbState(), bgFile };
-    thumbBg = img;
-    drawThumb();
+    currentThumb = { ...thumbState(), bgFile, textOk: false };
+    $("thumbTextOk").checked = false;
+    loadThumbBg();
     markDirty();
-    toast(img.width !== img.height ? "그림을 넣었습니다. 정사각형이 아니어서 가운데를 기준으로 잘라 보여 줍니다." : "그림을 넣었습니다.", 3500);
+    toast("그림을 넣었습니다. 그림 속 글자가 노란 칸의 제목과 똑같은지 비교한 뒤 체크해 주세요.", 5000);
   } catch (e) {
     toast(e.message, 4000);
   }
 }
 
 $("btnThumbCopy").onclick = () => {
-  const title = $("title").value.trim() || $("thumbTitle").value.trim();
-  if (!title && !$("topic").value.trim()) return toast("제목을 먼저 입력해 주세요.");
-  copyRequest("thumb", { title, topic: $("topic").value.trim(), withText: $("thumbWithText").checked, useImgStyle: $("thumbImgStyle").checked }, CHATGPT_URL, "ChatGPT");
+  const thumbTitle = thumbTitleText();
+  if (!thumbTitle && !$("topic").value.trim()) return toast("제목을 먼저 입력해 주세요.");
+  copyRequest(
+    "thumb",
+    { thumbTitle, title: $("title").value.trim(), topic: $("topic").value.trim(), sub: $("thumbSub").value.trim(), office: $("thumbOffice").value.trim(), useImgStyle: $("thumbImgStyle").checked },
+    CHATGPT_URL,
+    "ChatGPT"
+  );
 };
-for (const id of ["thumbTitle", "thumbSub", "thumbOffice", "thumbPreset"]) {
+for (const id of ["thumbTitle", "thumbSub", "thumbOffice"]) {
   $(id).addEventListener("input", () => {
-    currentThumb = thumbState();
+    // 글자를 바꾸면 이전 확인은 무효
+    currentThumb = { ...thumbState(), textOk: false };
+    $("thumbTextOk").checked = false;
     if (id === "thumbOffice") { try { localStorage.setItem("thumbOffice", $("thumbOffice").value); } catch {} }
-    drawThumb();
+    renderThumbExpect();
     markDirty();
   });
 }
-$("title").addEventListener("input", () => { if (!$("thumbTitle").value.trim()) drawThumb(); });
+$("title").addEventListener("input", () => { if (!$("thumbTitle").value.trim()) renderThumbExpect(); });
+$("thumbTextOk").addEventListener("change", () => { currentThumb = { ...thumbState(), textOk: $("thumbTextOk").checked }; markDirty(); });
 $("thumbFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) setThumbBgFromFile(f); };
-$("btnThumbClearBg").onclick = () => { currentThumb = { ...thumbState(), bgFile: "" }; thumbBg = null; drawThumb(); markDirty(); };
+$("btnThumbClear").onclick = () => {
+  if (!currentThumb?.bgFile) return;
+  if (!confirm("대표 이미지 그림을 지울까요?")) return;
+  currentThumb = { ...thumbState(), bgFile: "", textOk: false };
+  $("thumbTextOk").checked = false;
+  loadThumbBg();
+  markDirty();
+};
 const drop = $("thumbDrop");
 drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
 drop.addEventListener("dragleave", () => drop.classList.remove("over"));
@@ -906,9 +829,16 @@ drop.addEventListener("paste", (e) => {
   if (item) { e.preventDefault(); setThumbBgFromFile(item.getAsFile()); } else toast("복사된 그림이 없습니다. ChatGPT 그림을 내려받아 끌어다 놓아 주세요.", 3500);
 });
 $("btnThumbSave").onclick = async () => {
-  try { downloadBlob(await thumbPngBlob(), `${safeName($("title").value)}-대표이미지.png`); } catch (e) { toast(e.message, 3500); }
+  try {
+    const blob = await thumbFileBlob();
+    const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[blob.type] || "png";
+    downloadBlob(blob, `${safeName($("title").value)}-대표이미지.${ext}`);
+  } catch (e) { toast(e.message, 3500); }
 };
-$("btnThumbCopyImg").onclick = () => copyImageBlob(thumbPngBlob(), "대표 이미지");
+$("btnThumbCopyImg").onclick = () => {
+  if (!currentThumb?.bgFile) return toast("대표 이미지 그림이 없습니다.");
+  copyImageBlob(thumbPngBlob(), "대표 이미지");
+};
 
 // ───────────── 이미지 학습 ─────────────
 
@@ -916,18 +846,6 @@ let imgStyle = { body: { samples: [], palette: [], guide: "" }, thumb: { samples
 const IMG_KIND = { body: { url: CLAUDE_URL, site: "claude.ai" }, thumb: { url: CHATGPT_URL, site: "ChatGPT" } };
 const styleTouched = { body: false, thumb: false };
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
-}
-function hexToRgba(hex, a) {
-  const [r, g, b] = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${a})`;
-}
-function luminance(hex) {
-  const [r, g, b] = hexToRgb(hex);
-  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-}
 const toHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
 
 function hasImgStyle(kind) {
@@ -953,7 +871,6 @@ function renderImgStyle() {
     $(`isMeta-${kind}`).textContent = k.guideAt ? `저장: ${timeStr(k.guideAt)}` : "";
   }
   updateImgStyleToggles();
-  renderBandSwatches();
 }
 
 function updateImgStyleToggles() {
@@ -968,17 +885,6 @@ function updateImgStyleToggles() {
       ? `(주요 색 ${k.palette.length}개${k.guide?.trim() ? " + 스타일 지침" : ""})`
       : "('이미지 학습'에서 샘플을 넣으면 사용할 수 있습니다)";
   }
-}
-
-function renderBandSwatches() {
-  const box = $("thumbBand");
-  if (!box) return;
-  const colors = [...new Set([...(imgStyle.thumb.palette || []), ...(imgStyle.body.palette || [])])].slice(0, 8);
-  const cur = currentThumb?.bandColor || "";
-  box.innerHTML =
-    `<button class="swatch ${cur ? "" : "on"}" data-band=""><i style="background:linear-gradient(135deg,#0d261d 50%,#03a94d 50%)"></i>기본</button>` +
-    colors.map((h) => `<button class="swatch ${cur === h ? "on" : ""}" data-band="${h}"><i style="background:${h}"></i>${h}</button>`).join("") +
-    (colors.length ? "" : '<span class="muted small">이미지 학습에 샘플을 넣으면 내 색이 나옵니다.</span>');
 }
 
 function loadImg(src) {
@@ -1146,15 +1052,6 @@ document.querySelectorAll("[data-is-file]").forEach((inp) => {
 });
 $("bodyImgStyle").addEventListener("change", () => (styleTouched.body = true));
 $("thumbImgStyle").addEventListener("change", () => (styleTouched.thumb = true));
-$("thumbBand").onclick = (e) => {
-  const b = e.target.closest("[data-band]");
-  if (!b) return;
-  currentThumb = { ...thumbState(), bandColor: b.dataset.band };
-  renderBandSwatches();
-  drawThumb();
-  markDirty();
-};
-
 // ───────────── 2차 검증 (ChatGPT) ─────────────
 
 function contentHash(text) {

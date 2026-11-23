@@ -208,46 +208,41 @@
         </div>
 
         <div class="img-section">
-          <h4>대표 이미지 (ChatGPT 그림 + 제목 글자)</h4>
-          <p class="small muted">ChatGPT가 그린 배경 그림 위에 앱이 제목을 정확하게 얹습니다(글자 오탈자 방지). 그림 없이 기본 배경으로도 만들 수 있습니다.</p>
+          <h4>대표 이미지 (ChatGPT · 제목 글자 포함)</h4>
+          <p class="small muted">ChatGPT가 대표 이미지를 그리면서 <b>제목 글자까지</b> 넣습니다. 그림 속 한글은 틀리거나 깨질 수 있으니, 받은 그림을 상자에 넣고 <b>넣을 제목과 꼭 비교</b>해 주세요.</p>
           <label class="check inline"><input type="checkbox" id="thumbImgStyle" /> <span>내 대표 이미지 스타일 반영 <small id="thumbImgStyleInfo"></small></span></label>
-          <ol class="steps small">
-            <li>
-              <label class="check inline"><input type="checkbox" id="thumbWithText" /> ChatGPT가 글자까지 넣기 <span class="muted">(한글 오탈자가 생길 수 있어 비추천)</span></label>
-              <button id="btnThumbCopy">대표 이미지 요청문 복사 → ChatGPT 열기</button>
-            </li>
-            <li>ChatGPT 그림을 <b>내려받아</b> 아래 상자에 끌어다 놓거나, 그림을 복사해 상자를 누르고 <b>Ctrl+V</b></li>
-          </ol>
           <div class="thumb-wrap">
-            <div id="thumbDrop" class="thumb-drop" tabindex="0" title="그림을 끌어다 놓거나, 누른 뒤 Ctrl+V">
-              <canvas id="thumbCanvas" width="1080" height="1080"></canvas>
-            </div>
             <div class="thumb-ctrl">
-              <label class="small">대표 이미지 제목 <span class="muted">(Enter로 줄바꿈)</span>
+              <label class="small">대표 이미지에 넣을 제목 <span class="muted">(Enter로 줄바꿈 · 짧을수록 정확)</span>
                 <textarea id="thumbTitle" rows="3" placeholder="비워 두면 글 제목 사용"></textarea>
               </label>
-              <p id="thumbWarn" class="review-stale hidden">⚠ 제목이 길어 일부가 잘립니다. 위 칸에 짧게 줄여 적어 주세요.</p>
               <label class="small">작은 글씨 (선택)
                 <input id="thumbSub" placeholder="예: 2026년 귀속 · 신고기한 총정리" />
               </label>
               <label class="small">사무소명 (선택)
                 <input id="thumbOffice" placeholder="예: ○○세무회계" />
               </label>
-              <div class="small"><b>띠·상자 색</b> <span class="muted">(내 주요 색에서 고르기)</span><div id="thumbBand" class="swatches"></div></div>
-              <label class="small">글자 배치
-                <select id="thumbPreset">
-                  <option value="bottom">아래쪽 띠</option>
-                  <option value="center">가운데 상자</option>
-                  <option value="top">위쪽 띠</option>
-                </select>
-              </label>
+              <ol class="steps small">
+                <li><button id="btnThumbCopy" class="primary">대표 이미지 요청문 복사 → ChatGPT 열기</button></li>
+                <li>ChatGPT 그림을 <b>내려받아</b> 오른쪽 상자에 끌어다 놓기 (또는 그림 복사 후 상자를 누르고 <b>Ctrl+V</b>)</li>
+                <li>그림 속 글자를 아래 제목과 비교 → 똑같으면 체크</li>
+              </ol>
+            </div>
+            <div>
+              <div id="thumbDrop" class="thumb-drop" tabindex="0" title="그림을 끌어다 놓거나, 누른 뒤 Ctrl+V">
+                <img id="thumbImg" alt="대표 이미지" hidden />
+                <div id="thumbEmpty" class="thumb-empty">ChatGPT 그림을 여기에 끌어다 놓거나<br>누른 뒤 Ctrl+V</div>
+              </div>
+              <div class="thumb-compare">
+                <span class="small muted">그림에 들어가야 할 글자</span>
+                <div id="thumbExpect" class="thumb-expect"></div>
+              </div>
+              <label id="thumbCheckRow" class="check hidden"><input type="checkbox" id="thumbTextOk" /> <span>그림 속 글자가 위와 <b>똑같은 것</b>을 확인했습니다 (맞춤법·띄어쓰기·숫자)</span></label>
               <div class="actions">
                 <label class="button ghost small">그림 파일 선택<input id="thumbFile" type="file" accept="image/png,image/jpeg,image/webp" hidden /></label>
-                <button id="btnThumbClearBg" class="ghost small">기본 배경</button>
-              </div>
-              <div class="actions">
-                <button id="btnThumbSave" class="primary small">PNG 저장 (2160px)</button>
                 <button id="btnThumbCopyImg" class="ghost small">이미지 복사</button>
+                <button id="btnThumbSave" class="primary small">그림 저장</button>
+                <button id="btnThumbClear" class="ghost danger small">그림 지우기</button>
               </div>
             </div>
           </div>
@@ -262,7 +257,7 @@
           <li><button id="btnCopyBody">본문 복사(서식 포함)</button> → 본문 칸에 붙여넣기</li>
           <li><button id="btnCopyTags">태그 복사</button> → 태그 칸에 붙여넣기</li>
           <li>본문의 노란 <b>[이미지 N 자리]</b>마다: 위 <b>본문 이미지</b>의 <b>이미지 복사</b> → 그 자리에 붙여넣고 안내 줄 지우기</li>
-          <li><b>대표 이미지</b>: PNG 저장 후 네이버에서 사진 올리기 → 대표 사진으로 지정</li>
+          <li><b>대표 이미지</b>: '그림 저장' 후 네이버에서 사진 올리기 → 대표 사진으로 지정</li>
           <li>발행 후 글 주소를 위 <b>네이버 글 주소</b>에 넣고 상태를 <b>발행 완료</b>로 저장</li>
         </ol>
       </div>
