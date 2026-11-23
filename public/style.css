@@ -278,3 +278,7 @@ body.mode-copy .api-only { display: none !important; }
 .cal-settings { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
 .cal-settings summary { cursor: pointer; font-weight: 600; font-size: 14px; }
 .cal-settings input { margin-bottom: 6px; }
+
+.ai-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.topic-basis { display: inline-block; font-size: 10px; color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 0 6px; margin-left: 4px; vertical-align: 1px; }
+#btnTopicsAuto { white-space: nowrap; }

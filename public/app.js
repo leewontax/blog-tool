@@ -911,9 +911,9 @@ function renderTopics(state) {
       : "";
     $("topicsTime").textContent = "";
     $("topicsNote").textContent = !state.aiReady
-      ? "① '요청문 복사'를 누르면 claude.ai가 열립니다. 웹 검색을 켜고 붙여넣어 보내세요. ② 답변의 코드 블록을 복사해 '답변 붙여넣기'에 넣으면 TOP 5가 표시됩니다."
+      ? "'🔄 갱신'을 누르면 바로 추천 주제가 표시됩니다(무료)."
       : state.error || "최신 소식과 세금 일정을 조사하고 있습니다. 1~3분 걸립니다.";
-    $("tickerText").textContent = state.aiReady ? "추천 주제 조사 중…" : "추천 주제 없음 — 요청문 복사로 받아 보세요";
+    $("tickerText").textContent = state.aiReady ? "추천 주제 조사 중…" : "추천 주제 없음 — 🔄 갱신을 눌러 주세요";
     $("topicSources").classList.add("hidden");
     return;
   }
@@ -925,11 +925,11 @@ function renderTopics(state) {
     .map((t, i) => {
       const meter = t.trend
         ? `${sparkline(t.trend.series)}<span>지수 ${t.trend.level}${t.trend.change != null ? ` <b class="chg ${t.trend.change >= 0 ? "up" : "down"}">${t.trend.change >= 0 ? "▲" : "▼"}${Math.abs(t.trend.change)}%</b>` : ""}</span>`
-        : `<div class="bar"><i style="width:${t.interest}%"></i></div><span>예상 ${t.interest}</span>`;
+        : `<div class="bar"><i style="width:${t.interest}%"></i></div><span>${doc.mode === "auto" ? "점수" : "예상"} ${t.interest}</span>`;
       return `<li class="topic ${changed ? "flash" : ""}">
         <div class="rank">${t.rank}${moveBadge(t, hasHistory)}</div>
         <div class="topic-body">
-          <div class="topic-title"><span class="topic-cat">${escapeHtml(t.category)}</span>${escapeHtml(t.title)}</div>
+          <div class="topic-title"><span class="topic-cat">${escapeHtml(t.category)}</span>${escapeHtml(t.title)}${t.basis ? `<span class="topic-basis">${escapeHtml(t.basis)}</span>` : doc.mode === "ai" ? '<span class="topic-basis">AI 조사</span>' : ""}</div>
           <div class="topic-reason">${escapeHtml(t.reason)}</div>
           <div class="meter" title="${t.trend ? "네이버 데이터랩 최근 4주 검색 추이 (5개 주제끼리 비교한 상대값, 전국 기준). 변화율은 최근 7일과 그 전 7일 비교" : "AI가 추정한 예상 관심도입니다. 실제 검색량이 아닙니다."}">${meter}</div>
           <div class="topic-actions"><button data-topic="${i}">이 주제로 쓰기</button></div>
@@ -939,13 +939,17 @@ function renderTopics(state) {
     .join("");
 
   const notes = [];
-  notes.push(doc.topics.some((t) => t.trend) ? "그래프: 네이버 데이터랩 최근 4주 검색 추이(전국, 상대값)" : "막대: AI 추정 관심도(실제 검색량 아님)");
+  if (doc.mode === "auto") {
+    notes.push("자동 갱신(무료·AI 미사용): 세무달력 기한 + 시기별 주제 + 지역 뉴스로 계산");
+    notes.push(doc.newsError ? `지역 뉴스를 불러오지 못해 달력·시기별 주제로만 추천했습니다(${doc.newsError})` : (doc.newsCount ? `세금과 관련된 지역 뉴스 ${doc.newsCount}건 반영` : "세금과 관련된 최근 지역 뉴스 없음"));
+  }
+  notes.push(doc.topics.some((t) => t.trend) ? "그래프: 네이버 데이터랩 최근 4주 검색 추이(전국, 상대값)" : doc.mode === "auto" ? "막대: 앱이 계산한 추천 점수(실제 검색량 아님)" : "막대: AI 추정 관심도(실제 검색량 아님)");
   if (doc.trendError) notes.push(doc.trendError);
   else if (!state.datalab) notes.push("네이버 데이터랩 키를 넣으면 실제 검색 추이로 표시됩니다");
   if (state.error) notes.push(`최근 갱신 실패: ${state.error}`);
   if (!state.aiReady) {
     const days = (Date.now() - new Date(doc.generatedAt).getTime()) / 86400_000;
-    if (days >= 3) notes.unshift(`${Math.floor(days)}일 전 목록입니다. '요청문 복사'로 새로 받아 보세요`);
+    if (days >= 3) notes.unshift(`${Math.floor(days)}일 전 목록입니다. '🔄 갱신'을 눌러 새로 받아 보세요`);
   }
   notes.push("날짜·기한은 글 쓰기 전 꼭 확인하세요");
   $("topicsNote").textContent = notes.join(" · ");
@@ -982,8 +986,24 @@ async function loadTopics() {
   topicsPoll = setTimeout(loadTopics, topicsDoc?.refreshing ? 20_000 : 600_000);
 }
 
+async function autoTopics(silent = false) {
+  const btn = $("btnTopicsAuto");
+  btn.disabled = true;
+  btn.textContent = "갱신 중…";
+  try {
+    const { doc } = await api("/api/topics/auto", { method: "POST", body: {} });
+    if (!silent) toast(doc.newsError ? "추천 주제를 갱신했습니다. (지역 뉴스는 불러오지 못해 달력·시기별 주제로 추천)" : doc.newsCount ? `추천 주제를 갱신했습니다. 관련 지역 뉴스 ${doc.newsCount}건을 반영했습니다.` : "추천 주제를 갱신했습니다.", 3500);
+  } catch (e) {
+    if (!silent) toast(e.message, 3500);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🔄 갱신";
+  }
+  await loadTopics();
+}
+
 async function refreshTopics() {
-  if (!confirm("최신 소식을 새로 조사합니다. 1~3분 걸리고 AI 요금이 조금 나옵니다. 진행할까요?")) return;
+  if (!confirm("AI로 최신 소식을 정밀 조사합니다. 1~3분 걸리고 API 요금이 나옵니다. 진행할까요?")) return;
   topicsDoc = { ...(topicsDoc || {}), refreshing: true };
   renderTopics(topicsDoc);
   try {
@@ -1023,6 +1043,7 @@ $("topicList").onclick = (e) => {
   if (b) useTopic(Number(b.dataset.topic));
 };
 $("btnTopicsRefresh").onclick = refreshTopics;
+$("btnTopicsAuto").onclick = () => autoTopics(false);
 $("btnTopicsCopy").onclick = () => copyRequest("topics");
 $("btnTopicsPaste").onclick = () => {
   $("topicPasteBox").classList.toggle("hidden");
@@ -1383,5 +1404,6 @@ window.addEventListener("beforeunload", (e) => { if (dirty) e.preventDefault(); 
   await loadTemplates();
   await loadSamples();
   fillForm(null);
-  loadTopics();
+  await loadTopics();
+  if (!topicsDoc?.doc && !topicsDoc?.refreshing) autoTopics(true);
 })();

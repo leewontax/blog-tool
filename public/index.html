@@ -27,11 +27,7 @@
     <section class="panel trends" id="trendsPanel">
       <div class="trends-head">
         <h2>추천 주제 TOP 5</h2>
-        <span class="head-btns">
-          <button id="btnTopicsCopy" class="ghost small copy-only" title="claude.ai에 붙여넣을 요청문 복사">요청문 복사</button>
-          <button id="btnTopicsPaste" class="ghost small copy-only">답변 붙여넣기</button>
-          <button id="btnTopicsRefresh" class="ghost small api-only" title="새로 조사하기">새로 고침</button>
-        </span>
+        <button id="btnTopicsAuto" class="primary small" title="세무달력·시기별 주제·지역 뉴스로 바로 갱신 (무료)">🔄 갱신</button>
       </div>
       <div class="trends-meta">
         <button id="regionBtn" class="region" title="지역 바꾸기">📍 <span id="regionName">안성시</span></button>
@@ -44,6 +40,12 @@
       </div>
       <ol id="topicList" class="topic-list"></ol>
       <p id="topicsNote" class="muted small"></p>
+      <div class="ai-row">
+        <span class="small muted">더 정확하게:</span>
+        <button id="btnTopicsCopy" class="ghost small copy-only" title="claude.ai에 붙여넣을 요청문 복사">AI 정밀 조사 요청문</button>
+        <button id="btnTopicsPaste" class="ghost small copy-only">답변 붙여넣기</button>
+        <button id="btnTopicsRefresh" class="ghost small api-only" title="AI로 새로 조사하기(API 요금 발생)">AI 정밀 조사</button>
+      </div>
       <details id="topicSources" class="sources-detail hidden"><summary>조사에 쓴 자료</summary><div id="topicSourceList"></div></details>
     </section>
     <section class="panel compose">

@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import { upcoming, weekday } from "./public/taxcal.js";
+import { buildAutoTopics } from "./topics-auto.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "public");
@@ -720,7 +721,7 @@ async function attachTrends(topics) {
   }
 }
 
-async function saveTopicsDoc(region, topics, sources) {
+async function saveTopicsDoc(region, topics, sources, extra = {}) {
   const old = await readStore("topics", null);
   // 순위 변동 표시용: 직전 목록에서 같은 대표 검색어(또는 같은 제목)가 몇 위였는지
   for (const t of topics) {
@@ -728,7 +729,7 @@ async function saveTopicsDoc(region, topics, sources) {
     t.prevRank = before ? before.rank : null;
   }
   const trendError = await attachTrends(topics);
-  const doc = { region, generatedAt: new Date().toISOString(), topics, sources: sources.slice(0, 15), trendError };
+  const doc = { region, generatedAt: new Date().toISOString(), topics, sources: sources.slice(0, 15), trendError, mode: "ai", ...extra };
   await writeStore("topics", doc);
   return doc;
 }
@@ -781,6 +782,25 @@ async function handleTopics(req, res, action) {
     const r = await startTopicJob();
     lastTopicError = r.ok ? null : { at: Date.now(), message: r.error };
     return r.ok ? sendJson(res, 200, { doc: r.doc }) : sendJson(res, 502, { error: r.error });
+  }
+  if (req.method === "POST" && action === "auto") {
+    // 무료 자동 갱신: 세무달력 + 시기별 주제 + 지역 뉴스 (AI 사용 안 함)
+    const cal = await readStore("calendar", CAL_DEFAULT);
+    const r = await buildAutoTopics({
+      region: settings.region,
+      today: kstDate(),
+      extraHolidays: cal.extraHolidays,
+      posts: await readStore("posts", []),
+      naver: {
+        id: NAVER_ID,
+        secret: NAVER_SECRET,
+        newsUrl: process.env.NAVER_NEWS_URL || "https://openapi.naver.com/v1/search/news.json",
+        rssUrl: process.env.NEWS_RSS_URL,
+      },
+    });
+    const doc = await saveTopicsDoc(settings.region, r.topics, r.sources, { mode: "auto", newsCount: r.newsCount, newsError: r.newsError });
+    lastTopicError = null;
+    return sendJson(res, 200, { doc });
   }
   if (req.method === "POST" && action === "import") {
     const b = await readBody(req);
@@ -1112,7 +1132,7 @@ const server = http.createServer(async (req, res) => {
       if (!client) return sendJson(res, 503, { error: "AI 키가 설정되지 않았습니다. README의 '처음 한 번 설정'을 따라 .env 파일에 ANTHROPIC_API_KEY를 넣어 주세요." });
       return await aiRoutes[pathname](req, res);
     }
-    const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import))?$/);
+    const topicMatch = pathname.match(/^\/api\/topics(?:\/(refresh|region|import|auto))?$/);
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
     const calMatch = pathname.match(/^\/api\/calendar(?:\/(holidays|events)(?:\/([\w-]+))?)?$/);
     if (calMatch) return await handleCalendar(req, res, calMatch[1], calMatch[2]);
