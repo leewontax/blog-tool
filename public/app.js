@@ -66,7 +66,7 @@ const S = {
 function inline(text, forCopy) {
   let s = escapeHtml(text);
   s = s.replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
-  s = s.replace(/\[확인 필요\]/g, forCopy ? `<span style="${S.mark}">[확인 필요]</span>` : "<mark>[확인 필요]</mark>");
+  s = forCopy ? s.replace(/\s*\[확인 필요\]/g, "") : s.replace(/\[확인 필요\]/g, "<mark>[확인 필요]</mark>");
   s = s.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>');
   return s;
 }
@@ -127,6 +127,7 @@ function markdownToHtml(md, forCopy = false) {
 
 function markdownToPlain(md) {
   return md
+    .replace(/\s*\[확인 필요\]/g, "")
     .replace(/^\s*\[이미지\s*(\d+)(?:\s*[:：]\s*(.*?))?\]\s*$/gm, "📷 [이미지 $1 자리] 여기에 이미지 $1을 붙여넣고 이 줄은 지우세요")
     .replace(/^#{1,3}\s+/gm, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
@@ -158,7 +159,9 @@ async function copyBody() {
   const md = $("content").value;
   if (!md.trim()) return toast("본문이 비어 있습니다.");
   const left = (md.match(/\[확인 필요\]/g) || []).length;
-  if (left && !confirm(`본문에 [확인 필요] 표시가 ${left}곳 남아 있습니다.\n확인하지 않은 내용이 그대로 발행될 수 있습니다.\n\n그래도 복사할까요?`)) return;
+  if (left && !confirm(`본문에 [확인 필요] 표시가 ${left}곳 있습니다.\n복사할 때 이 표시는 자동으로 빠지지만, 그 문장의 내용이 비어 있거나 어색할 수 있습니다.\n먼저 해당 문장을 고치시는 것을 권합니다.\n\n그래도 복사할까요?`)) return;
+  const open = currentChecks.filter((c) => !c.done);
+  if (open.length && !confirm(`발행 전 확인할 내용 중 ${open.length}개를 아직 체크하지 않았습니다.\n- ${open.slice(0, 5).map((c) => c.text).join("\n- ")}${open.length > 5 ? "\n…" : ""}\n\n그래도 본문을 복사할까요?`)) return;
   const slots = md.split("\n").filter((l) => MARKER_RE.test(l)).length;
   const reviewNote = reviewStatusNote();
   if (reviewNote && !confirm(`${reviewNote}\n\n그래도 본문을 복사할까요?`)) return;
@@ -240,6 +243,7 @@ function readForm() {
     naverUrl: $("naverUrl").value.trim(),
     review: currentReview,
     images: currentImages,
+    checks: currentChecks,
     thumb: thumbState(),
   };
 }
@@ -254,6 +258,8 @@ function fillForm(p) {
   $("scheduledAt").value = p?.scheduledAt || "";
   $("naverUrl").value = p?.naverUrl || "";
   currentImages = Array.isArray(p?.images) ? p.images : [];
+  currentChecks = Array.isArray(p?.checks) ? p.checks : [];
+  renderChecks();
   currentThumb = p?.thumb || null;
   loadThumbFields();
   renderBodyImages();
@@ -362,15 +368,16 @@ function cleanLine(t) {
 }
 
 function parseResult(text) {
-  const re = /===\s*(제목\s*후보|본문|해시태그|수정\s*내역)\s*===/g;
+  const re = /===\s*(제목\s*후보|본문|해시태그|수정\s*내역|확인할\s*내용)\s*===/g;
   const marks = [...text.matchAll(re)];
-  if (!marks.length) return { body: text.trim(), titles: [], tags: [], changes: [] };
-  const out = { titles: [], tags: [], body: "", changes: [] };
+  if (!marks.length) return { body: text.trim(), titles: [], tags: [], changes: [], checks: null };
+  const out = { titles: [], tags: [], body: "", changes: [], checks: null };
   marks.forEach((m, i) => {
     const chunk = text.slice(m.index + m[0].length, i + 1 < marks.length ? marks[i + 1].index : undefined).trim();
     const name = m[1].replace(/\s/g, "");
     if (name === "제목후보") out.titles = chunk.split("\n").map(cleanLine).filter((t) => t && !/^\(.*\)$/.test(t)).slice(0, 5);
     else if (name === "본문") out.body = chunk;
+    else if (name === "확인할내용") out.checks = chunk.split("\n").map(cleanLine).filter((t) => t && !/^\(?없음\)?\.?$/.test(t) && !/^\(.*\)$/.test(t));
     else if (name === "수정내역") out.changes = chunk.split("\n").map((l) => l.replace(/^\s*[-*•]\s*/, "").trim()).filter(Boolean);
     else out.tags = chunk.split(/[,#\n]/).map((t) => t.trim().replace(/\s+/g, "")).filter(Boolean).slice(0, 15);
   });
@@ -403,14 +410,15 @@ function applyResult() {
     if (!$("title").value.trim() || r.body) $("title").value = r.titles[0];
   }
   if (r.tags.length) $("tags").value = r.tags.join(", ");
+  if (r.checks) setChecks(r.checks);
   setMode("edit");
   updateCounter();
   markDirty();
   $("pasteResult").value = "";
-  const left = ($("content").value.match(/\[확인 필요\]/g) || []).length;
+  const left = currentChecks.filter((c) => !c.done).length;
   toast(
     r.body
-      ? `적용했습니다.${left ? ` [확인 필요] ${left}곳을 꼭 확인해 주세요.` : " 내용을 검토해 주세요."} 제목 후보를 클릭하면 바꿀 수 있습니다.`
+      ? `적용했습니다.${left ? ` 본문 아래 '발행 전 확인할 내용' ${left}개를 꼭 확인해 주세요.` : " 내용을 검토해 주세요."} 제목 후보를 클릭하면 바꿀 수 있습니다.`
       : "제목 후보와 해시태그를 적용했습니다.",
     4000
   );
@@ -444,6 +452,51 @@ function applyMode(aiReady) {
     ? "국가법령정보센터·국세청·기재부 등 공식 사이트만 검색"
     : "공식 자료 확인 요청을 넣습니다 (claude.ai에서 웹 검색이 켜져 있어야 합니다)";
 }
+
+// ───────────── 발행 전 확인할 내용 ─────────────
+
+let currentChecks = []; // [{text, done}]
+
+function setChecks(texts) {
+  // 같은 문구는 체크 상태를 유지
+  const prev = new Map(currentChecks.map((c) => [c.text, c.done]));
+  currentChecks = [...new Set(texts.map((t) => t.trim()).filter(Boolean))].map((text) => ({ text, done: prev.get(text) || false }));
+  renderChecks();
+}
+
+function renderChecks() {
+  const list = $("checkList");
+  const open = currentChecks.filter((c) => !c.done).length;
+  $("checkCount").textContent = currentChecks.length ? (open ? `남은 항목 ${open}개 / ${currentChecks.length}개` : "모두 확인함") : "없음";
+  $("checkBox").classList.toggle("all-done", currentChecks.length > 0 && !open);
+  list.innerHTML = currentChecks
+    .map((c, i) => `<li class="${c.done ? "done" : ""}"><input type="checkbox" data-chk="${i}" ${c.done ? "checked" : ""}/><span>${escapeHtml(c.text)}</span><button data-chk-del="${i}" title="삭제">✕</button></li>`)
+    .join("");
+}
+
+$("checkList").onchange = (e) => {
+  const b = e.target.closest("[data-chk]");
+  if (!b) return;
+  currentChecks[Number(b.dataset.chk)].done = b.checked;
+  renderChecks();
+  markDirty();
+};
+$("checkList").onclick = (e) => {
+  const d = e.target.closest("[data-chk-del]");
+  if (!d) return;
+  currentChecks.splice(Number(d.dataset.chkDel), 1);
+  renderChecks();
+  markDirty();
+};
+$("btnCheckAdd").onclick = () => {
+  const t = $("checkNew").value.trim();
+  if (!t) return;
+  currentChecks.push({ text: t, done: false });
+  $("checkNew").value = "";
+  renderChecks();
+  markDirty();
+};
+$("checkNew").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("btnCheckAdd").click(); } });
 
 // ───────────── 이미지 만들기 ─────────────
 
@@ -584,7 +637,7 @@ function renderBodyImages() {
 $("btnBodyImgCopy").onclick = () => {
   const content = $("content").value;
   if (!content.trim()) return toast("본문을 먼저 완성해 주세요.");
-  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value) });
+  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks });
 };
 
 $("btnBodyImgApply").onclick = () => {
@@ -949,6 +1002,7 @@ $("btnFixApply").onclick = async () => {
   if (!confirm("지금 본문을 수정본으로 바꿉니다. ('수정 전으로 되돌리기'로 되돌릴 수 있습니다)\n계속할까요?")) return;
   fixUndo = before;
   $("content").value = body;
+  if (r.checks) setChecks(r.checks);
   $("fixPaste").value = "";
   setMode("edit");
   updateCounter();
@@ -957,8 +1011,8 @@ $("btnFixApply").onclick = async () => {
   $("btnFixUndo").classList.remove("hidden");
   markDirty();
   await save({ snapshotReason: "수정본 적용 전" });
-  const left = (body.match(/\[확인 필요\]/g) || []).length;
-  toast(`수정본을 적용하고 저장했습니다.${left ? ` [확인 필요] ${left}곳이 남아 있습니다.` : ""} 수정 내역을 확인한 뒤, 가능하면 2차 검증을 한 번 더 해 주세요.`, 5500);
+  const left = currentChecks.filter((c) => !c.done).length;
+  toast(`수정본을 적용하고 저장했습니다.${left ? ` 확인할 내용 ${left}개가 남아 있습니다.` : ""} 수정 내역을 확인한 뒤, 가능하면 2차 검증을 한 번 더 해 주세요.`, 5500);
 };
 
 $("btnFixUndo").onclick = async () => {
@@ -978,7 +1032,7 @@ $("btnFixUndo").onclick = async () => {
 $("btnReviewCopy").onclick = () => {
   const content = $("content").value;
   if (!content.trim()) return toast("검증할 본문이 없습니다.");
-  copyRequest("review", { title: $("title").value.trim(), topic: $("topic").value.trim(), content }, CHATGPT_URL, "ChatGPT");
+  copyRequest("review", { title: $("title").value.trim(), topic: $("topic").value.trim(), content, checks: currentChecks }, CHATGPT_URL, "ChatGPT");
 };
 $("btnReviewSave").onclick = saveReview;
 $("btnReviewToggle").onclick = () => {
@@ -1046,8 +1100,15 @@ async function draft() {
       }
     }
     if (!failed) {
-      const left = ($("content").value.match(/\[확인 필요\]/g) || []).length;
-      status.textContent = left ? `완료 — [확인 필요] ${left}곳을 꼭 확인해 주세요.` : "완료 — 내용을 검토해 주세요.";
+      const full = $("content").value;
+      const cut = full.search(/===\s*확인할\s*내용\s*===/);
+      if (cut >= 0) {
+        setChecks(parseResult(full.slice(cut)).checks || []);
+        $("content").value = full.slice(0, cut).trim();
+        updateCounter();
+      }
+      const left = currentChecks.filter((c) => !c.done).length;
+      status.textContent = left ? `완료 — 본문 아래 '발행 전 확인할 내용' ${left}개를 꼭 확인해 주세요.` : "완료 — 내용을 검토해 주세요.";
       markDirty();
       if (!$("title").value.trim()) suggestMeta(true);
     }
@@ -1739,7 +1800,7 @@ function calWrite(ev) {
     ev.shifted ? `법정 기한 ${ev.legal}(${weekday(ev.legal)})이 쉬는 날이라 ${ev.due}(${weekday(ev.due)})로 연장됨 — 반드시 글에 정확히 표시` : "",
     `대상: ${ev.who}`,
     `참고 근거(확인용 — 본문에 법령명·조문은 쓰지 말 것): ${ev.basis}`,
-    "기한·대상은 최신 자료로 다시 확인하고, 불확실하면 [확인 필요]로 표시",
+    "기한·대상은 최신 자료로 다시 확인하고, 불확실한 수치는 본문에 쓰지 말고 '확인할 내용'에 적을 것",
   ].filter(Boolean).join("\n");
   const tpl = templates.find((t) => t.id === "tpl-deadline");
   if (tpl) $("templateSelect").value = tpl.id;

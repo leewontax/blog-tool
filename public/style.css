@@ -322,3 +322,16 @@ label.check.inline { display: inline-flex; margin: 0 8px 4px 0; font-size: 13px;
 /* 본문 미리보기 속 이미지 자리 */
 .img-slot { margin: 14px 0; padding: 8px; border: 2px dashed #e0b400; border-radius: 8px; background: #fffbe6; text-align: center; color: #6b5a00; font-size: 13px; }
 .img-slot img { display: block; max-width: 100%; margin: 0 auto 6px; background: #fff; }
+
+/* 발행 전 확인할 내용 */
+.check-box { margin: 4px 0 14px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); }
+.check-box > p { margin: 4px 0 6px; }
+.check-list { list-style: none; margin: 0; padding: 0; }
+.check-list li { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; font-size: 14px; }
+.check-list li input { width: auto; margin: 3px 0 0; flex: none; }
+.check-list li.done span { color: var(--muted); text-decoration: line-through; }
+.check-list li button { margin-left: auto; padding: 0 6px; font-size: 12px; border: 0; background: none; color: var(--muted); }
+.check-add { display: flex; gap: 6px; margin-top: 6px; }
+.check-add input { margin: 0; background: var(--panel); }
+.check-box.all-done { border-color: var(--accent); }
+.check-add button { flex: none; white-space: nowrap; }
