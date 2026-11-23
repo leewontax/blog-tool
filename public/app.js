@@ -686,33 +686,21 @@ $("bodyImgList").onclick = async (e) => {
 
 function thumbState() {
   return {
-    title: $("thumbTitle").value,
-    sub: $("thumbSub").value,
-    office: $("thumbOffice").value,
     bgFile: currentThumb?.bgFile || "",
     textOk: Boolean(currentThumb?.textOk),
   };
 }
 
 function thumbTitleText() {
-  return $("thumbTitle").value.trim() || $("title").value.trim();
+  return $("title").value.trim();
 }
 
 function renderThumbExpect() {
   const t = thumbTitleText();
-  const sub = $("thumbSub").value.trim();
-  const office = $("thumbOffice").value.trim();
-  $("thumbExpect").innerHTML = t
-    ? `${escapeHtml(t)}${sub ? `<small>작은 글씨: ${escapeHtml(sub)}</small>` : ""}${office ? `<small>사무소명: ${escapeHtml(office)}</small>` : ""}`
-    : "<small>제목을 입력해 주세요</small>";
+  $("thumbExpect").innerHTML = t ? escapeHtml(t) : "<small>글 제목을 먼저 입력해 주세요</small>";
 }
 
 function loadThumbFields() {
-  let office = "";
-  try { office = localStorage.getItem("thumbOffice") || ""; } catch {}
-  $("thumbTitle").value = currentThumb?.title || "";
-  $("thumbSub").value = currentThumb?.sub || "";
-  $("thumbOffice").value = currentThumb?.office ?? office;
   $("thumbTextOk").checked = Boolean(currentThumb?.textOk);
   renderThumbExpect();
 }
@@ -790,25 +778,22 @@ async function setThumbBgFromFile(file) {
 
 $("btnThumbCopy").onclick = () => {
   const thumbTitle = thumbTitleText();
-  if (!thumbTitle && !$("topic").value.trim()) return toast("제목을 먼저 입력해 주세요.");
+  if (!thumbTitle) return toast("글 제목을 먼저 입력해 주세요.");
   copyRequest(
     "thumb",
-    { thumbTitle, title: $("title").value.trim(), topic: $("topic").value.trim(), sub: $("thumbSub").value.trim(), office: $("thumbOffice").value.trim(), useImgStyle: $("thumbImgStyle").checked },
+    { thumbTitle, title: thumbTitle, topic: $("topic").value.trim(), useImgStyle: $("thumbImgStyle").checked },
     CHATGPT_URL,
     "ChatGPT"
   );
 };
-for (const id of ["thumbTitle", "thumbSub", "thumbOffice"]) {
-  $(id).addEventListener("input", () => {
-    // 글자를 바꾸면 이전 확인은 무효
+// 글 제목을 바꾸면 대표 이미지 글자 확인은 다시 해야 함
+$("title").addEventListener("input", () => {
+  renderThumbExpect();
+  if (currentThumb?.textOk) {
     currentThumb = { ...thumbState(), textOk: false };
     $("thumbTextOk").checked = false;
-    if (id === "thumbOffice") { try { localStorage.setItem("thumbOffice", $("thumbOffice").value); } catch {} }
-    renderThumbExpect();
-    markDirty();
-  });
-}
-$("title").addEventListener("input", () => { if (!$("thumbTitle").value.trim()) renderThumbExpect(); });
+  }
+});
 $("thumbTextOk").addEventListener("change", () => { currentThumb = { ...thumbState(), textOk: $("thumbTextOk").checked }; markDirty(); });
 $("thumbFile").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) setThumbBgFromFile(f); };
 $("btnThumbClear").onclick = () => {
