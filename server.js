@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import { upcoming, weekday } from "./public/taxcal.js";
 import { buildAutoTopics } from "./topics-auto.js";
+import { localAiStatus, runClaude, runCodex } from "./local-ai.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, "public");
@@ -1252,40 +1253,77 @@ async function importTopics(text) {
   return saveTopicsDoc(region, topics, sources);
 }
 
-async function handlePromptRequest(req, res, kind) {
-  const body = req.method === "POST" ? await readBody(req) : {};
+const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
+
+// 요청문 만들기 (복사 방식·자동 실행 공용)
+async function buildPrompt(kind, body) {
   let text = null;
   if (kind === "draft") {
-    if (!String(body.topic || "").trim()) return sendJson(res, 400, { error: "주제를 입력해 주세요." });
+    if (!String(body.topic || "").trim()) throw bad("주제를 입력해 주세요.");
     text = await buildDraftRequest(body);
   } else if (kind === "meta") {
-    if (!String(body.content || "").trim() && !String(body.topic || "").trim()) return sendJson(res, 400, { error: "주제나 본문을 먼저 입력해 주세요." });
+    if (!String(body.content || "").trim() && !String(body.topic || "").trim()) throw bad("주제나 본문을 먼저 입력해 주세요.");
     text = await buildMetaRequest(body);
   } else if (kind === "style") {
     text = await buildStyleRequest();
-    if (!text) return sendJson(res, 400, { error: "'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요." });
+    if (!text) throw bad("'반영'으로 켜 둔 내 글이 없습니다. 먼저 글을 1개 이상 추가해 주세요.");
   } else if (kind === "topics") {
     text = await buildTopicsRequest();
   } else if (kind === "bodyimages") {
-    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문을 먼저 완성해 주세요." });
+    if (!String(body.content || "").trim()) throw bad("본문을 먼저 완성해 주세요.");
     text = buildBodyImagesRequest(body, await readImgStyle());
   } else if (kind === "thumb") {
-    if (!String(body.thumbTitle || body.title || body.topic || "").trim()) return sendJson(res, 400, { error: "제목을 먼저 입력해 주세요." });
+    if (!String(body.thumbTitle || body.title || body.topic || "").trim()) throw bad("제목을 먼저 입력해 주세요.");
     text = buildThumbRequest(body, await readImgStyle());
   } else if (kind === "imgstyle-body" || kind === "imgstyle-thumb") {
     const k = kind.split("-")[1];
     const st = await readImgStyle();
-    if (!st[k].samples.length) return sendJson(res, 400, { error: "샘플 이미지를 먼저 넣어 주세요." });
+    if (!st[k].samples.length) throw bad("샘플 이미지를 먼저 넣어 주세요.");
     text = buildImgStyleRequest(k, st[k]);
   } else if (kind === "fix") {
-    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "본문이 없습니다." });
-    if (!String(body.reviewText || "").trim()) return sendJson(res, 400, { error: "먼저 2차 검증 결과를 저장해 주세요." });
+    if (!String(body.content || "").trim()) throw bad("본문이 없습니다.");
+    if (!String(body.reviewText || "").trim()) throw bad("먼저 2차 검증 결과를 저장해 주세요.");
     text = await buildFixRequest(body);
   } else if (kind === "review") {
-    if (!String(body.content || "").trim()) return sendJson(res, 400, { error: "검증할 본문이 없습니다." });
+    if (!String(body.content || "").trim()) throw bad("검증할 본문이 없습니다.");
     text = buildReviewRequest(body);
-  } else return sendJson(res, 404, { error: "not found" });
-  sendJson(res, 200, { text });
+  } else throw bad("not found", 404);
+  return text;
+}
+
+async function handlePromptRequest(req, res, kind) {
+  const body = req.method === "POST" ? await readBody(req) : {};
+  sendJson(res, 200, { text: await buildPrompt(kind, body) });
+}
+
+// ───────── 자동 실행 (내 PC의 Claude Code·Codex, 추가 비용 없음) ─────────
+const AUTO_KINDS = {
+  draft: { engine: "claude", web: (b) => Boolean(b.webSearch) },
+  meta: { engine: "claude", web: () => false },
+  style: { engine: "claude", web: () => false },
+  fix: { engine: "claude", web: () => true },
+  bodyimages: { engine: "claude", web: () => false },
+  topics: { engine: "claude", web: () => true },
+  review: { engine: "codex" },
+};
+
+async function handleLocalAi(req, res, action) {
+  if (req.method === "GET" && action === "status") {
+    const refresh = new URL(req.url, "http://x").searchParams.has("refresh");
+    return sendJson(res, 200, await localAiStatus(refresh));
+  }
+  if (req.method === "POST" && action === "run") {
+    const b = await readBody(req);
+    const spec = AUTO_KINDS[b.kind];
+    if (!spec) return sendJson(res, 400, { error: "자동 실행을 지원하지 않는 작업입니다." });
+    const prompt = await buildPrompt(b.kind, b.body || {});
+    const started = Date.now();
+    const text = spec.engine === "codex"
+      ? await runCodex(prompt, { dataDir: DATA_DIR })
+      : await runClaude(prompt, { web: spec.web(b.body || {}), dataDir: DATA_DIR });
+    return sendJson(res, 200, { text, engine: spec.engine, seconds: Math.round((Date.now() - started) / 1000) });
+  }
+  sendJson(res, 405, { error: "지원하지 않는 요청" });
 }
 
 // ───────────────────────── 세무달력 (내 일정·추가 휴일) ─────────────────────────
@@ -1542,6 +1580,8 @@ const server = http.createServer(async (req, res) => {
     if (topicMatch) return await handleTopics(req, res, topicMatch[1]);
     const calMatch = pathname.match(/^\/api\/calendar(?:\/(holidays|events)(?:\/([\w-]+))?)?$/);
     if (calMatch) return await handleCalendar(req, res, calMatch[1], calMatch[2]);
+    const laMatch = pathname.match(/^\/api\/localai\/(status|run)$/);
+    if (laMatch) return await handleLocalAi(req, res, laMatch[1]);
     const promptMatch = pathname.match(/^\/api\/prompt\/(draft|meta|style|topics|review|fix|bodyimages|thumb|imgstyle-body|imgstyle-thumb)$/);
     if (promptMatch) return await handlePromptRequest(req, res, promptMatch[1]);
     const sampleMatch = pathname.match(/^\/api\/samples(?:\/([\w-]+))?$/);
@@ -1588,6 +1628,8 @@ const server = http.createServer(async (req, res) => {
 
 // 내 컴퓨터에서만 접속되도록 127.0.0.1 에만 연결
 process.title = "블로그 글 도우미 - 이 창을 닫으면 프로그램이 꺼집니다";
+// 자동 실행(최대 6분)이 중간에 끊기지 않도록 요청 시간 제한을 늘림
+server.requestTimeout = 10 * 60 * 1000;
 
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {

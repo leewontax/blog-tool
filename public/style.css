@@ -369,3 +369,15 @@ button.swatch.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--acce
 .tag-chips { margin: 6px 0 0; }
 .tag-chips .chip { background: var(--panel); border: 1px solid var(--line); }
 .tag-chips .chip.done { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+
+/* 자동 실행 */
+button.badge { border: 0; cursor: pointer; font-weight: 600; }
+.auto-status { display: grid; gap: 8px; margin: 12px 0; }
+.auto-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.auto-row .pill { margin-left: auto; }
+.dlg h4 { margin: 16px 0 6px; font-size: 14px; }
+.auto-steps li { margin: 8px 0; }
+.cmd { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; }
+.dlg code { font-family: ui-monospace, Consolas, monospace; }
+.auto-busy { opacity: .75; }

@@ -445,7 +445,7 @@ function applyMode(aiReady) {
   mode = aiReady ? "api" : "copy";
   document.body.classList.toggle("mode-copy", mode === "copy");
   const badge = $("aiBadge");
-  badge.textContent = mode === "api" ? "AI 바로 작성(API)" : "요청문 복사 방식 · 추가 비용 없음";
+  badge.textContent = mode === "api" ? "AI 바로 작성(API)" : autoLabel();
   badge.className = `badge ${mode === "api" ? "ok" : ""}`;
   badge.title = mode === "api" ? "API 키가 설정되어 있어 사용한 만큼 요금이 나옵니다." : "claude.ai에 붙여넣어 쓰는 방식입니다. 구독 요금 외 추가 비용이 없습니다.";
   $("btnDraft").textContent = mode === "api" ? "AI 초안 작성" : "요청문 복사 → claude.ai 열기";
@@ -454,7 +454,110 @@ function applyMode(aiReady) {
   $("webSearchInfo").textContent = mode === "api"
     ? "국가법령정보센터·국세청·기재부 등 공식 사이트만 검색"
     : "공식 자료 확인 요청을 넣습니다 (claude.ai에서 웹 검색이 켜져 있어야 합니다)";
+  applyAutoLabels();
 }
+
+// ───────────── 자동 실행 (내 PC의 Claude Code·Codex, 추가 비용 없음) ─────────────
+
+let localAi = { claude: { ready: false }, codex: { ready: false } };
+const ENGINE_OF = { draft: "claude", meta: "claude", style: "claude", fix: "claude", bodyimages: "claude", topics: "claude", review: "codex" };
+const ENGINE_NAME = { claude: "Claude", codex: "ChatGPT" };
+const AUTO_LABELS = {
+  btnDraft: ["claude", "AI 초안 작성 (자동)"],
+  btnMeta: ["claude", "제목·태그 추천받기 (자동)"],
+  btnAnalyze: ["claude", "말투 분석하기 (자동)"],
+  btnFixCopy: ["claude", "수정본 만들기 (자동)"],
+  btnBodyImgCopy: ["claude", "본문 이미지 만들기 (자동)"],
+  btnTopicsCopy: ["claude", "AI 정밀 조사 (자동)"],
+  btnReviewCopy: ["codex", "ChatGPT로 2차 검증 (자동)"],
+};
+const manualLabels = {};
+
+function autoOn() {
+  try { return localStorage.getItem("autoRun") !== "0"; } catch { return true; }
+}
+function engineReady(engine) {
+  return mode === "copy" && autoOn() && Boolean(localAi[engine]?.ready);
+}
+function autoLabel() {
+  const on = engineReady("claude") || engineReady("codex");
+  return on ? "자동 실행 · 추가 비용 없음" : "요청문 복사 방식 · 추가 비용 없음";
+}
+
+function applyAutoLabels() {
+  for (const [id, [engine, label]] of Object.entries(AUTO_LABELS)) {
+    const b = $(id);
+    if (!b || b.dataset.busy) continue;
+    if (!b.textContent.includes("(자동)")) manualLabels[id] = b.textContent; // 원래(복사 방식) 문구 기억
+    b.textContent = engineReady(engine) ? label : manualLabels[id] ?? b.textContent;
+  }
+  if (mode === "copy") $("aiBadge").textContent = autoLabel();
+}
+
+// 자동 실행 → 결과를 붙여넣기 칸에 넣고 기존 '적용' 처리 그대로 실행. 안 되면 요청문 복사로.
+async function viaAuto(kind, body, btn, onText, copyFallback) {
+  const engine = ENGINE_OF[kind];
+  if (!engineReady(engine)) return copyFallback();
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.dataset.busy = "1";
+  btn.textContent = `${ENGINE_NAME[engine]} 자동 작성 중… (1~3분)`;
+  toast(`${ENGINE_NAME[engine]}가 작성 중입니다. 1~3분 정도 걸립니다. 다른 화면을 봐도 됩니다.`, 4000);
+  try {
+    const { text, seconds } = await api("/api/localai/run", { method: "POST", body: { kind, body } });
+    await onText(text);
+    setTimeout(() => toast(`${ENGINE_NAME[engine]} 자동 작성 완료 (${seconds}초) — 내용을 꼭 검토해 주세요.`, 4000), 300);
+  } catch (e) {
+    if (confirm(`${e.message}\n\n이번에는 요청문 복사 방식으로 진행할까요?`)) await copyFallback();
+  } finally {
+    btn.disabled = false;
+    delete btn.dataset.busy;
+    btn.textContent = label;
+  }
+}
+
+function pillFor(st, name) {
+  if (!st.installed) return ["설치 안 됨", "draft"];
+  if (!st.ready) return ["로그인 필요", "fix"];
+  return [`사용 가능 ✓`, "ok"];
+}
+
+async function loadLocalAi(refresh = false) {
+  try {
+    localAi = await api(`/api/localai/status${refresh ? "?refresh=1" : ""}`);
+  } catch {
+    localAi = { claude: { ready: false }, codex: { ready: false } };
+  }
+  for (const [id, key] of [["stClaude", "claude"], ["stCodex", "codex"]]) {
+    const [text, cls] = pillFor(localAi[key] || {}, key);
+    $(id).textContent = text;
+    $(id).className = `pill ${cls}`;
+    $(id).title = localAi[key]?.version || "";
+  }
+  $("autoOn").checked = autoOn();
+  applyAutoLabels();
+}
+
+$("aiBadge").onclick = () => { loadLocalAi(true); $("autoDlg").showModal(); };
+$("btnAutoClose").onclick = () => $("autoDlg").close();
+$("btnAutoRecheck").onclick = async () => {
+  $("btnAutoRecheck").disabled = true;
+  $("btnAutoRecheck").textContent = "확인 중…";
+  await loadLocalAi(true);
+  $("btnAutoRecheck").disabled = false;
+  $("btnAutoRecheck").textContent = "다시 확인";
+  toast(engineReady("claude") || engineReady("codex") ? "자동 실행을 쓸 수 있습니다." : "아직 자동 실행을 쓸 수 없습니다. 설치·로그인 후 앱을 껐다 켜 주세요.", 3500);
+};
+$("autoOn").onchange = () => {
+  try { localStorage.setItem("autoRun", $("autoOn").checked ? "1" : "0"); } catch {}
+  applyAutoLabels();
+};
+$("autoDlg").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-cmd]");
+  if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.cmd); } catch { fallbackCopy(b.dataset.cmd); }
+  toast("명령을 복사했습니다. PowerShell에 붙여넣고(마우스 오른쪽 클릭 또는 Ctrl+V) Enter를 누르세요.", 4000);
+});
 
 // ───────────── 발행 전 확인할 내용 ─────────────
 
@@ -639,7 +742,8 @@ function renderBodyImages() {
 $("btnBodyImgCopy").onclick = () => {
   const content = $("content").value;
   if (!content.trim()) return toast("본문을 먼저 완성해 주세요.");
-  copyRequest("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks, useImgStyle: $("bodyImgStyle").checked });
+  const body = { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks, useImgStyle: $("bodyImgStyle").checked };
+  viaAuto("bodyimages", body, $("btnBodyImgCopy"), (text) => { $("bodyImgPaste").value = text; $("btnBodyImgApply").onclick(); }, () => copyRequest("bodyimages", body));
 };
 
 $("btnBodyImgApply").onclick = () => {
@@ -1117,12 +1221,13 @@ function renderFixChanges(changes) {
 $("btnFixCopy").onclick = () => {
   if (!currentReview) return toast("먼저 2차 검증 결과를 저장해 주세요.");
   if (currentReview.verdict === "발행 가능" && !currentReview.issues && !confirm("검증 판정이 '발행 가능'입니다. 그래도 수정본을 만들까요?")) return;
-  copyRequest("fix", {
+  const body = {
     title: $("title").value.trim(),
     content: $("content").value,
     reviewText: currentReview.text,
     useStyle: $("useStyle").checked,
-  });
+  };
+  viaAuto("fix", body, $("btnFixCopy"), async (text) => { $("fixPaste").value = text; await $("btnFixApply").onclick(); }, () => copyRequest("fix", body));
 };
 
 $("btnFixApply").onclick = async () => {
@@ -1167,7 +1272,8 @@ $("btnFixUndo").onclick = async () => {
 $("btnReviewCopy").onclick = () => {
   const content = $("content").value;
   if (!content.trim()) return toast("검증할 본문이 없습니다.");
-  copyRequest("review", { title: $("title").value.trim(), topic: $("topic").value.trim(), content, checks: currentChecks }, CHATGPT_URL, "ChatGPT");
+  const body = { title: $("title").value.trim(), topic: $("topic").value.trim(), content, checks: currentChecks };
+  viaAuto("review", body, $("btnReviewCopy"), async (text) => { $("reviewPaste").value = text; await saveReview(); }, () => copyRequest("review", body, CHATGPT_URL, "ChatGPT"));
 };
 $("btnReviewSave").onclick = saveReview;
 $("btnReviewToggle").onclick = () => {
@@ -1182,7 +1288,10 @@ $("content").addEventListener("input", () => currentReview && $("reviewStale").c
 async function draft() {
   const topic = $("topic").value.trim();
   if (!topic) return toast("주제를 입력해 주세요.");
-  if (mode === "copy") return copyRequest("draft", draftRequestBody());
+  if (mode === "copy") {
+    const body = draftRequestBody();
+    return viaAuto("draft", body, $("btnDraft"), (text) => { $("pasteResult").value = text; applyResult(); }, () => copyRequest("draft", body));
+  }
   if ($("content").value.trim() && !confirm("지금 본문을 AI 초안으로 바꿉니다. 계속할까요?")) return;
 
   const btn = $("btnDraft");
@@ -1260,9 +1369,10 @@ async function suggestMeta(auto = false) {
   const topic = $("topic").value.trim();
   if (!content.trim() && !topic) return toast("주제나 본문을 먼저 입력해 주세요.");
   if (mode === "copy") {
-    if (await copyRequest("meta", { topic, content, useStyle: $("useStyle").checked }))
-      setTimeout(() => toast("답변을 복사해 왼쪽 'claude.ai 답변 붙여넣기' 칸에 넣고 적용을 누르세요.", 4500), 4600);
-    return;
+    const body = { topic, content, useStyle: $("useStyle").checked };
+    return viaAuto("meta", body, $("btnMeta"), (text) => { $("pasteResult").value = text; applyResult(); }, async () => {
+      if (await copyRequest("meta", body)) setTimeout(() => toast("답변을 복사해 왼쪽 'claude.ai 답변 붙여넣기' 칸에 넣고 적용을 누르세요.", 4500), 4600);
+    });
   }
   const btn = $("btnMeta");
   btn.disabled = true;
@@ -1492,7 +1602,7 @@ async function saveSample() {
 
 async function analyzeStyle() {
   if (!usedSamples().length) return toast("'반영'으로 켜 둔 글이 없습니다.");
-  if (mode === "copy") return copyRequest("style");
+  if (mode === "copy") return viaAuto("style", {}, $("btnAnalyze"), async (text) => { $("styleProfile").value = text; await saveStyle(); }, () => copyRequest("style"));
   if ($("styleProfile").value.trim() && !confirm("지금 말투 요약을 새 분석 결과로 바꿉니다. 계속할까요?")) return;
   const btn = $("btnAnalyze");
   btn.disabled = true;
@@ -1723,7 +1833,7 @@ $("topicList").onclick = (e) => {
 };
 $("btnTopicsRefresh").onclick = refreshTopics;
 $("btnTopicsAuto").onclick = () => autoTopics(false);
-$("btnTopicsCopy").onclick = () => copyRequest("topics");
+$("btnTopicsCopy").onclick = () => viaAuto("topics", {}, $("btnTopicsCopy"), async (text) => { $("topicPaste").value = text; await $("btnTopicsImport").onclick(); }, () => copyRequest("topics"));
 $("btnTopicsPaste").onclick = () => {
   $("topicPasteBox").classList.toggle("hidden");
   if (!$("topicPasteBox").classList.contains("hidden")) $("topicPaste").focus();
@@ -2211,6 +2321,7 @@ document.addEventListener("visibilitychange", () => {
   try {
     const s = await api("/api/status");
     applyMode(s.aiReady);
+    loadLocalAi();
   } catch {
     applyMode(false);
   }
