@@ -381,3 +381,19 @@ button.badge { border: 0; cursor: pointer; font-weight: 600; }
 .cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--line); font-size: 12px; }
 .dlg code { font-family: ui-monospace, Consolas, monospace; }
 .auto-busy { opacity: .75; }
+
+/* 원클릭 전체 진행 */
+.pipe-box { margin-bottom: 12px; padding: 12px; border-radius: 10px; border: 2px solid var(--accent); background: var(--accent-soft); }
+.pipe-btn { font-size: 16px; }
+.pipe-box > p { margin: 8px 0; }
+.pipe-opts { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.pipe-steps { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; }
+.pipe-steps li { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; background: var(--panel); font-size: 14px; }
+.pipe-steps li .ic { width: 20px; text-align: center; flex: none; }
+.pipe-steps li .tm { margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.pipe-steps li.run { outline: 2px solid var(--accent); font-weight: 700; }
+.pipe-steps li.skip, .pipe-steps li.wait { color: var(--muted); }
+.pipe-steps li.fail, .pipe-steps li.stop { background: #fdecea; }
+.pipe-steps li .nt { display: block; font-size: 12px; font-weight: 400; color: var(--muted); }
+.pipe-result { margin: 10px 0 0; padding: 10px 12px; border-radius: 8px; background: var(--panel); font-size: 14px; line-height: 1.6; }
+.pipe-result.warn { background: var(--warn); }

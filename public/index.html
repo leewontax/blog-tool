@@ -80,6 +80,19 @@
         <input type="checkbox" id="webSearch" checked />
         <span>공식 자료 검색해서 쓰기 <small id="webSearchInfo">국가법령정보센터·국세청·기재부 등 공식 사이트만 검색</small></span>
       </label>
+      <div id="pipeBox" class="pipe-box hidden">
+        <button id="btnPipeline" class="primary big pipe-btn">🚀 원클릭 전체 진행</button>
+        <p class="small muted">초안 → 2차 검증 → 수정본 → 재검증 → 본문 이미지를 자동으로 이어서 진행합니다(약 5~15분). 마지막 검토·대표 이미지·발행은 직접 합니다.</p>
+        <div class="pipe-opts">
+          <label class="check inline"><input type="checkbox" id="pipeReview" checked /> <span>2차 검증·수정본</span></label>
+          <label class="check inline"><input type="checkbox" id="pipeRecheck" checked /> <span>수정 후 재검증</span></label>
+          <label class="check inline"><input type="checkbox" id="pipeImages" checked /> <span>본문 이미지</span></label>
+        </div>
+        <p id="pipeNote" class="small muted hidden"></p>
+        <ol id="pipeSteps" class="pipe-steps hidden"></ol>
+        <p id="pipeResult" class="pipe-result hidden"></p>
+        <button id="btnPipeStop" class="ghost small hidden">중단 (지금 단계가 끝나면 멈춤)</button>
+      </div>
       <button id="btnDraft" class="primary big">AI 초안 작성</button>
       <div class="copy-only copy-steps">
         <p class="small muted">① 위 버튼을 누르면 요청문이 복사되고 claude.ai가 열립니다. 대화창에 붙여넣기(Ctrl+V) 후 보내세요.<br>

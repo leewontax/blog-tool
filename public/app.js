@@ -400,12 +400,13 @@ function showTitleChips(titles) {
   }
 }
 
-function applyResult() {
+function applyResult(opts = {}) {
   const text = $("pasteResult").value.trim();
   if (!text) return toast("claude.ai 답변을 먼저 붙여넣어 주세요.");
   const r = parseResult(text);
+  if (opts.auto && !r.body) throw new Error("초안 답변에서 본문을 찾지 못했습니다.");
   if (r.body) {
-    if ($("content").value.trim() && $("content").value.trim() !== r.body && !confirm("지금 본문을 붙여넣은 답변으로 바꿉니다. 계속할까요?")) return;
+    if (!opts.auto && $("content").value.trim() && $("content").value.trim() !== r.body && !confirm("지금 본문을 붙여넣은 답변으로 바꿉니다. 계속할까요?")) return;
     $("content").value = r.body;
   }
   if (r.titles.length) {
@@ -418,6 +419,7 @@ function applyResult() {
   updateCounter();
   markDirty();
   $("pasteResult").value = "";
+  if (opts.auto) return;
   const left = currentChecks.filter((c) => !c.done).length;
   toast(
     r.body
@@ -492,6 +494,7 @@ function applyAutoLabels() {
     b.textContent = engineReady(engine) ? label : manualLabels[id] ?? b.textContent;
   }
   if (mode === "copy") $("aiBadge").textContent = autoLabel();
+  if (typeof updatePipeBox === "function") updatePipeBox();
 }
 
 // 자동 실행 → 결과를 붙여넣기 칸에 넣고 기존 '적용' 처리 그대로 실행. 안 되면 요청문 복사로.
@@ -746,12 +749,13 @@ $("btnBodyImgCopy").onclick = () => {
   viaAuto("bodyimages", body, $("btnBodyImgCopy"), (text) => { $("bodyImgPaste").value = text; $("btnBodyImgApply").onclick(); }, () => copyRequest("bodyimages", body));
 };
 
-$("btnBodyImgApply").onclick = () => {
-  const text = $("bodyImgPaste").value.trim();
+$("btnBodyImgApply").onclick = () => applyBodyImages($("bodyImgPaste").value.trim());
+
+function applyBodyImages(text, opts = {}) {
   if (!text) return toast("claude.ai 답변을 붙여넣어 주세요.");
   const { ok, bad } = parseBodyImages(text);
-  if (!ok.length) return toast("답변에서 SVG 이미지 코드를 찾지 못했습니다. 코드가 답변 안에 있는지 확인해 주세요.", 4500);
-  if (currentImages.length && !confirm(`지금 본문 이미지 ${currentImages.length}개를 새 이미지 ${ok.length}개로 바꿀까요?`)) return;
+  if (!ok.length) { if (opts.auto) throw new Error("이미지 코드를 받지 못했습니다."); return toast("답변에서 SVG 이미지 코드를 찾지 못했습니다. 코드가 답변 안에 있는지 확인해 주세요.", 4500); }
+  if (!opts.auto && currentImages.length && !confirm(`지금 본문 이미지 ${currentImages.length}개를 새 이미지 ${ok.length}개로 바꿀까요?`)) return;
   currentImages = ok;
   $("content").value = placeMarkers($("content").value, ok);
   $("bodyImgPaste").value = "";
@@ -759,8 +763,9 @@ $("btnBodyImgApply").onclick = () => {
   updateCounter();
   markDirty();
   const missing = ok.filter((im) => !im.place).length;
+  if (opts.auto) return { count: ok.length, bad };
   toast(`이미지 ${ok.length}개를 만들고 본문에 자리를 표시했습니다.${bad.length ? ` (이미지 ${bad.join(", ")}은 코드가 올바르지 않아 제외)` : ""}${missing ? " 위치를 못 찾은 이미지는 본문 끝에 두었습니다." : ""} 미리보기로 확인해 주세요.`, 5500);
-};
+}
 
 $("bodyImgList").onclick = async (e) => {
   const get = (attr) => currentImages.find((x) => x.n === Number(e.target.closest(`[${attr}]`)?.getAttribute(attr)));
@@ -1190,7 +1195,7 @@ function reviewStatusNote() {
   return notes.join("\n");
 }
 
-async function saveReview() {
+async function saveReview(opts = {}) {
   const text = $("reviewPaste").value.trim();
   if (!text) return toast("ChatGPT 답변을 붙여넣어 주세요.");
   if (!$("content").value.trim()) return toast("본문이 비어 있습니다.");
@@ -1201,7 +1206,7 @@ async function saveReview() {
   $("reviewResult").classList.remove("hidden");
   $("btnReviewToggle").textContent = "검증 결과 접기";
   markDirty();
-  await save();
+  await save({ auto: Boolean(opts.silent) });
   if (verdict === "판정 없음") toast("판정 문구를 찾지 못했습니다. 결과 내용을 직접 읽어 확인해 주세요.", 4000);
 }
 
@@ -1230,16 +1235,23 @@ $("btnFixCopy").onclick = () => {
   viaAuto("fix", body, $("btnFixCopy"), async (text) => { $("fixPaste").value = text; await $("btnFixApply").onclick(); }, () => copyRequest("fix", body));
 };
 
-$("btnFixApply").onclick = async () => {
-  const text = $("fixPaste").value.trim();
+$("btnFixApply").onclick = () => applyFix($("fixPaste").value.trim());
+
+// 수정본 적용 (auto: 원클릭 진행 중 — 확인창 대신 이상하면 멈춤)
+async function applyFix(text, opts = {}) {
+  const auto = Boolean(opts.auto);
   if (!text) return toast("claude.ai 답변을 붙여넣어 주세요.");
   const r = parseResult(text);
-  if (!r.changes.length && !/===\s*본문\s*===/.test(text) && !confirm("답변에서 '===본문===' 구분선을 찾지 못했습니다. 붙여넣은 내용 전체를 본문으로 바꿀까요?")) return;
+  const hasBody = /===\s*본문\s*===/.test(text);
+  if (!hasBody && auto) throw new Error("수정본 답변 형식이 올바르지 않아 적용하지 않았습니다.");
+  if (!r.changes.length && !hasBody && !confirm("답변에서 '===본문===' 구분선을 찾지 못했습니다. 붙여넣은 내용 전체를 본문으로 바꿀까요?")) return;
   const body = r.body.trim();
-  if (!body) return toast("수정본 본문이 비어 있습니다.");
+  if (!body) { if (auto) throw new Error("수정본 본문이 비어 있습니다."); return toast("수정본 본문이 비어 있습니다."); }
   const before = $("content").value;
-  if (body.length < before.trim().length * 0.6 && !confirm(`수정본이 원래 글보다 많이 짧습니다(원래 ${before.trim().length.toLocaleString()}자 → 수정본 ${body.length.toLocaleString()}자).\n일부가 빠졌을 수 있습니다. 그래도 적용할까요?`)) return;
-  if (!confirm("지금 본문을 수정본으로 바꿉니다. ('수정 전으로 되돌리기'로 되돌릴 수 있습니다)\n계속할까요?")) return;
+  const tooShort = body.length < before.trim().length * 0.6;
+  if (tooShort && auto) throw new Error(`수정본이 원래 글보다 많이 짧아(원래 ${before.trim().length.toLocaleString()}자 → ${body.length.toLocaleString()}자) 일부가 빠졌을 수 있어 적용하지 않았습니다.`);
+  if (tooShort && !confirm(`수정본이 원래 글보다 많이 짧습니다(원래 ${before.trim().length.toLocaleString()}자 → 수정본 ${body.length.toLocaleString()}자).\n일부가 빠졌을 수 있습니다. 그래도 적용할까요?`)) return;
+  if (!auto && !confirm("지금 본문을 수정본으로 바꿉니다. ('수정 전으로 되돌리기'로 되돌릴 수 있습니다)\n계속할까요?")) return;
   fixUndo = before;
   $("content").value = body;
   if (r.checks) setChecks(r.checks);
@@ -1250,10 +1262,11 @@ $("btnFixApply").onclick = async () => {
   renderFixChanges(r.changes);
   $("btnFixUndo").classList.remove("hidden");
   markDirty();
-  await save({ snapshotReason: "수정본 적용 전" });
+  await save({ auto, snapshotReason: "수정본 적용 전" });
+  if (auto) return;
   const left = currentChecks.filter((c) => !c.done).length;
   toast(`수정본을 적용하고 저장했습니다.${left ? ` 확인할 내용 ${left}개가 남아 있습니다.` : ""} 수정 내역을 확인한 뒤, 가능하면 2차 검증을 한 번 더 해 주세요.`, 5500);
-};
+}
 
 $("btnFixUndo").onclick = async () => {
   if (fixUndo == null) return;
@@ -2214,6 +2227,197 @@ $("btnAbRun").onclick = async () => {
     toast(e.message, 4500);
   }
   loadAutoBackup();
+};
+
+// ───────────── 원클릭 전체 진행 ─────────────
+// 초안(Claude) → 2차 검증(ChatGPT) → 수정본(Claude) → 재검증(ChatGPT) → 본문 이미지(Claude)
+// 이상한 결과(발행 보류, 수정본이 지나치게 짧음 등)가 나오면 멈추고 알려 줌
+
+const pipe = { running: false, stop: false, steps: [], timer: null };
+const pipePref = { pipeReview: true, pipeRecheck: true }; // 사용자가 고른 값 (ChatGPT 연결 전에는 잠시 꺼 둠)
+const PIPE_ICON = { wait: "⏳", run: "▶", done: "✅", skip: "⏭", stop: "⛔", fail: "❌" };
+
+function updatePipeBox() {
+  const claudeOk = engineReady("claude");
+  const codexOk = engineReady("codex");
+  $("pipeBox").classList.toggle("hidden", !claudeOk);
+  for (const id of ["pipeReview", "pipeRecheck"]) {
+    $(id).disabled = !codexOk || pipe.running;
+    $(id).checked = codexOk && pipePref[id];
+  }
+  $("pipeImages").disabled = pipe.running;
+  $("pipeNote").textContent = codexOk ? "" : "ChatGPT(Codex)가 연결되지 않아 2차 검증은 건너뜁니다. 오른쪽 위 배지에서 설정할 수 있습니다.";
+  $("pipeNote").classList.toggle("hidden", codexOk);
+}
+
+function renderPipe() {
+  $("pipeSteps").innerHTML = pipe.steps
+    .map((st) => `<li class="${st.state}"><span class="ic">${PIPE_ICON[st.state]}</span><span>${escapeHtml(st.label)}${st.note ? `<span class="nt">${escapeHtml(st.note)}</span>` : ""}</span><span class="tm">${st.sec != null ? `${st.sec}초` : ""}</span></li>`)
+    .join("");
+}
+
+function pipeStep(key) {
+  return pipe.steps.find((s) => s.key === key);
+}
+
+async function runStep(key, fn) {
+  const st = pipeStep(key);
+  if (!st) return null;
+  if (pipe.stop) { st.state = "stop"; st.note = "중단함"; renderPipe(); throw Object.assign(new Error("중단했습니다."), { stopped: true }); }
+  st.state = "run";
+  const t0 = Date.now();
+  clearInterval(pipe.timer);
+  pipe.timer = setInterval(() => { st.sec = Math.round((Date.now() - t0) / 1000); renderPipe(); }, 1000);
+  renderPipe();
+  try {
+    const r = await fn();
+    st.state = "done";
+    return r;
+  } catch (e) {
+    st.state = e.stopped ? "stop" : "fail";
+    st.note = e.message;
+    throw e;
+  } finally {
+    clearInterval(pipe.timer);
+    st.sec = Math.round((Date.now() - t0) / 1000);
+    renderPipe();
+  }
+}
+
+function skipStep(key, note) {
+  const st = pipeStep(key);
+  if (st && st.state === "wait") { st.state = "skip"; st.note = note; renderPipe(); }
+}
+
+async function autoText(kind, body) {
+  const { text } = await api("/api/localai/run", { method: "POST", body: { kind, body } });
+  return text;
+}
+
+function reviewBody() {
+  return { title: $("title").value.trim(), topic: $("topic").value.trim(), content: $("content").value, checks: currentChecks };
+}
+
+async function doReview() {
+  $("reviewPaste").value = await autoText("review", reviewBody());
+  await saveReview({ silent: true });
+  return currentReview;
+}
+
+async function runPipeline() {
+  if (pipe.running) return;
+  if (!$("topic").value.trim()) return toast("주제를 입력해 주세요.");
+  if (!engineReady("claude")) return toast("자동 실행이 연결되어 있지 않습니다. 오른쪽 위 배지에서 설정해 주세요.", 4000);
+  if (($("content").value.trim() || currentImages.length) && !confirm("지금 본문·이미지를 새로 만든 내용으로 바꿉니다.\n(바꾸기 전 내용은 '이전 버전'에 보관됩니다)\n\n원클릭 전체 진행을 시작할까요?")) return;
+  if ($("content").value.trim() && currentId) await save({ snapshotReason: "원클릭 진행 전" });
+
+  const doReviewOn = $("pipeReview").checked && engineReady("codex");
+  const doRecheck = doReviewOn && $("pipeRecheck").checked;
+  const doImages = $("pipeImages").checked;
+  pipe.steps = [
+    { key: "draft", label: "초안 작성 (Claude)", state: "wait" },
+    ...(doReviewOn ? [{ key: "review", label: "2차 검증 (ChatGPT)", state: "wait" }, { key: "fix", label: "수정본 (Claude)", state: "wait" }] : []),
+    ...(doRecheck ? [{ key: "recheck", label: "수정본 재검증 (ChatGPT)", state: "wait" }] : []),
+    ...(doImages ? [{ key: "images", label: `본문 이미지 ${$("bodyImgN").value}개 (Claude)`, state: "wait" }] : []),
+  ];
+  pipe.running = true;
+  pipe.stop = false;
+  $("pipeSteps").classList.remove("hidden");
+  $("pipeResult").classList.add("hidden");
+  $("btnPipeStop").classList.remove("hidden");
+  $("btnPipeline").disabled = true;
+  $("btnPipeline").textContent = "🚀 진행 중… (창을 닫지 마세요)";
+  $("btnDraft").disabled = true;
+  updatePipeBox();
+  renderPipe();
+
+  const result = { ok: false, msg: "" };
+  let finalVerdict = null;
+  try {
+    // 1) 초안
+    await runStep("draft", async () => {
+      $("pasteResult").value = await autoText("draft", draftRequestBody());
+      applyResult({ auto: true });
+      currentReview = null; // 새 초안이므로 이전 검증 결과는 지움
+      renderReview();
+      await save({ auto: true });
+    });
+
+    // 2) 검증 → 수정본 → 재검증
+    if (doReviewOn) {
+      const rv = await runStep("review", doReview);
+      pipeStep("review").note = `판정: ${rv.verdict}${rv.issues ? ` · 수정 ${rv.issues}건` : ""}`;
+      finalVerdict = rv.verdict;
+      if (rv.verdict === "발행 보류") {
+        skipStep("fix", "발행 보류 판정이라 멈췄습니다");
+        skipStep("recheck", "");
+        skipStep("images", "");
+        throw Object.assign(new Error("2차 검증 판정이 '발행 보류'입니다. 검증 결과를 읽어 보고 직접 판단해 주세요."), { halt: true });
+      }
+      if (rv.verdict === "발행 가능" && !rv.issues) {
+        skipStep("fix", "수정할 내용 없음");
+        skipStep("recheck", "수정본 없음");
+      } else {
+        await runStep("fix", async () => {
+          await applyFix(await autoText("fix", { title: $("title").value.trim(), content: $("content").value, reviewText: currentReview.text, useStyle: $("useStyle").checked }), { auto: true });
+        });
+        if (doRecheck) {
+          const rv2 = await runStep("recheck", doReview);
+          pipeStep("recheck").note = `판정: ${rv2.verdict}${rv2.issues ? ` · 수정 ${rv2.issues}건` : ""}`;
+          finalVerdict = rv2.verdict;
+          if (rv2.verdict === "발행 보류") {
+            skipStep("images", "발행 보류 판정이라 멈췄습니다");
+            throw Object.assign(new Error("수정본 재검증 판정이 '발행 보류'입니다. 검증 결과를 확인해 주세요."), { halt: true });
+          }
+        }
+      }
+    }
+
+    // 3) 본문 이미지
+    if (doImages) {
+      await runStep("images", async () => {
+        const content = $("content").value;
+        const r = applyBodyImages(
+          await autoText("bodyimages", { title: $("title").value.trim(), content: content.split("\n").filter((l) => !MARKER_RE.test(l)).join("\n"), count: Number($("bodyImgN").value), checks: currentChecks, useImgStyle: $("bodyImgStyle").checked }),
+          { auto: true }
+        );
+        pipeStep("images").note = `이미지 ${r.count}개${r.bad.length ? ` (오류 ${r.bad.length}개 제외)` : ""}`;
+      });
+    }
+    await save({ auto: true });
+    result.ok = true;
+  } catch (e) {
+    result.msg = e.message;
+    if (!e.halt && !e.stopped) pipe.steps.filter((s) => s.state === "wait").forEach((s) => { s.state = "skip"; });
+    renderPipe();
+    await save({ auto: true }).catch(() => {});
+  } finally {
+    pipe.running = false;
+    $("btnPipeStop").classList.add("hidden");
+    $("btnPipeline").disabled = false;
+    $("btnPipeline").textContent = "🚀 원클릭 전체 진행";
+    $("btnDraft").disabled = false;
+    updatePipeBox();
+  }
+
+  // 결과 요약
+  const left = currentChecks.filter((c) => !c.done).length;
+  const box = $("pipeResult");
+  box.classList.remove("hidden");
+  box.classList.toggle("warn", !result.ok || (finalVerdict && finalVerdict !== "발행 가능") || left > 0);
+  box.innerHTML = result.ok
+    ? `<b>완료했습니다.</b> 아래를 확인해 주세요.<br>· 2차 검증 판정: <b>${escapeHtml(finalVerdict || "검증 안 함")}</b>${finalVerdict && finalVerdict !== "발행 가능" ? " — 검증 결과를 읽고 남은 부분을 직접 고쳐 주세요" : ""}<br>· 발행 전 확인할 내용: <b>${left}개</b><br>· 다음 할 일: 본문 검토 → 대표 이미지(ChatGPT) → 네이버에 붙여넣기`
+    : `<b>${escapeHtml(result.msg)}</b><br>여기까지 진행된 내용은 저장되었습니다. 남은 단계는 아래 버튼으로 하나씩 진행할 수 있습니다.`;
+  toast(result.ok ? "원클릭 전체 진행을 마쳤습니다. 결과를 꼭 검토해 주세요." : "원클릭 진행이 멈췄습니다. 안내를 확인해 주세요.", 5000);
+  $("pipeBox").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+$("btnPipeline").onclick = runPipeline;
+for (const id of ["pipeReview", "pipeRecheck"]) $(id).addEventListener("change", () => { pipePref[id] = $(id).checked; });
+$("btnPipeStop").onclick = () => {
+  pipe.stop = true;
+  $("btnPipeStop").textContent = "중단 예약됨 (지금 단계가 끝나면 멈춤)";
+  toast("지금 단계가 끝나면 멈춥니다.");
 };
 
 // ───────────── 화면 전환·연결 ─────────────
