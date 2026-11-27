@@ -77,7 +77,7 @@ export async function localAiStatus(refresh = false) {
   const codexCmd = await resolveCmd("codex");
   const [cv, cs, xv, xs] = await Promise.all([
     run(claudeCmd, ["--version"], { timeout: 20_000 }),
-    run(claudeCmd, ["auth", "status", "--text"], { timeout: 20_000 }),
+    run(claudeCmd, ["auth", "status"], { timeout: 20_000 }), // 기본 출력(JSON)의 loggedIn 값으로 판단
     run(codexCmd, ["--version"], { timeout: 20_000 }),
     run(codexCmd, ["login", "status"], { timeout: 20_000 }),
   ]);
@@ -85,16 +85,26 @@ export async function localAiStatus(refresh = false) {
   const claudeText = `${cs.out}\n${cs.err}`.trim();
   // '로그인 안 됨'이 분명할 때만 막고, 확인 명령이 버전 차이 등으로 실패하면 일단 사용하게 둠(실행 시 다시 확인됨)
   const NOT_LOGGED = /not (logged|signed) in|no (active )?(credentials|account)|unauthenticated|please (log|sign) ?in|log ?in required|로그인(되어 있지 않|하지 않|이 필요)/i;
-  const claudeSaysNo = NOT_LOGGED.test(claudeText);
+  // 1순위: JSON의 "loggedIn" 값 (글자 안내문은 Console 미로그인 같은 줄이 섞여 오판할 수 있음)
+  let claudeJson = null;
+  try {
+    const a = claudeText.indexOf("{"), b = claudeText.lastIndexOf("}");
+    if (a >= 0 && b > a) claudeJson = JSON.parse(claudeText.slice(a, b + 1));
+  } catch {}
+  const hasFlag = typeof claudeJson?.loggedIn === "boolean";
+  const claudeSaysNo = hasFlag ? !claudeJson.loggedIn : NOT_LOGGED.test(claudeText);
   const claudeLogged = claudeInstalled && !claudeSaysNo;
-  const claudeUncertain = claudeInstalled && !claudeSaysNo && cs.code !== 0;
+  const claudeUncertain = claudeInstalled && !claudeSaysNo && !hasFlag;
+  const claudeDetail = hasFlag
+    ? `로그인: ${claudeJson.loggedIn ? "됨" : "안 됨"}${claudeJson.authMethod ? ` · 방식: ${claudeJson.authMethod}` : ""}${claudeJson.apiProvider ? ` · ${claudeJson.apiProvider}` : ""}`
+    : claudeText.slice(0, 300);
   const codexInstalled = xv.code === 0 && !notInstalled(xv);
   const codexText = `${xs.out}\n${xs.err}`.trim();
   const codexSaysNo = NOT_LOGGED.test(codexText);
   const codexLogged = codexInstalled && !codexSaysNo;
   const codexUncertain = codexInstalled && !codexSaysNo && !/logged in/i.test(codexText);
   const value = {
-    claude: { installed: claudeInstalled, ready: claudeLogged, uncertain: claudeUncertain, version: claudeInstalled ? cv.out.trim().split("\n")[0] : "", detail: claudeInstalled ? claudeText.slice(0, 300) : "" },
+    claude: { installed: claudeInstalled, ready: claudeLogged, uncertain: claudeUncertain, version: claudeInstalled ? cv.out.trim().split("\n")[0] : "", detail: claudeInstalled ? claudeDetail : "", authMethod: claudeJson?.authMethod || "" },
     codex: { installed: codexInstalled, ready: codexLogged, uncertain: codexUncertain, version: codexInstalled ? xv.out.trim().split("\n")[0] : "", detail: codexInstalled ? codexText.slice(0, 300) : "", chatgpt: /chatgpt/i.test(codexText) },
   };
   statusCache = { at: Date.now(), value };
