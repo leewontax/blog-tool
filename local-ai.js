@@ -83,13 +83,19 @@ export async function localAiStatus(refresh = false) {
   ]);
   const claudeInstalled = cv.code === 0 && !notInstalled(cv);
   const claudeText = `${cs.out}\n${cs.err}`.trim();
-  const claudeLogged = claudeInstalled && cs.code === 0 && !/not (logged|signed) in|log ?in required|로그인(되어 있지 않|이 필요)/i.test(claudeText);
+  // '로그인 안 됨'이 분명할 때만 막고, 확인 명령이 버전 차이 등으로 실패하면 일단 사용하게 둠(실행 시 다시 확인됨)
+  const NOT_LOGGED = /not (logged|signed) in|no (active )?(credentials|account)|unauthenticated|please (log|sign) ?in|log ?in required|로그인(되어 있지 않|하지 않|이 필요)/i;
+  const claudeSaysNo = NOT_LOGGED.test(claudeText);
+  const claudeLogged = claudeInstalled && !claudeSaysNo;
+  const claudeUncertain = claudeInstalled && !claudeSaysNo && cs.code !== 0;
   const codexInstalled = xv.code === 0 && !notInstalled(xv);
   const codexText = `${xs.out}\n${xs.err}`.trim();
-  const codexLogged = codexInstalled && /logged in/i.test(codexText) && !/not logged in/i.test(codexText);
+  const codexSaysNo = NOT_LOGGED.test(codexText);
+  const codexLogged = codexInstalled && !codexSaysNo;
+  const codexUncertain = codexInstalled && !codexSaysNo && !/logged in/i.test(codexText);
   const value = {
-    claude: { installed: claudeInstalled, ready: claudeLogged, version: claudeInstalled ? cv.out.trim().split("\n")[0] : "", detail: claudeInstalled ? claudeText.slice(0, 300) : "" },
-    codex: { installed: codexInstalled, ready: codexLogged, version: codexInstalled ? xv.out.trim().split("\n")[0] : "", detail: codexInstalled ? codexText.slice(0, 300) : "", chatgpt: /chatgpt/i.test(codexText) },
+    claude: { installed: claudeInstalled, ready: claudeLogged, uncertain: claudeUncertain, version: claudeInstalled ? cv.out.trim().split("\n")[0] : "", detail: claudeInstalled ? claudeText.slice(0, 300) : "" },
+    codex: { installed: codexInstalled, ready: codexLogged, uncertain: codexUncertain, version: codexInstalled ? xv.out.trim().split("\n")[0] : "", detail: codexInstalled ? codexText.slice(0, 300) : "", chatgpt: /chatgpt/i.test(codexText) },
   };
   statusCache = { at: Date.now(), value };
   return value;

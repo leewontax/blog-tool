@@ -522,6 +522,7 @@ async function viaAuto(kind, body, btn, onText, copyFallback) {
 function pillFor(st, name) {
   if (!st.installed) return ["설치 안 됨", "draft"];
   if (!st.ready) return ["로그인 필요", "fix"];
+  if (st.uncertain) return ["사용 가능(로그인 확인 불가)", "fix"];
   return [`사용 가능 ✓`, "ok"];
 }
 
@@ -536,6 +537,9 @@ async function loadLocalAi(refresh = false) {
     $(id).textContent = text;
     $(id).className = `pill ${cls}`;
     $(id).title = localAi[key]?.version || "";
+    // 프로그램이 알려 준 상태 문구 그대로 표시 (문제 생기면 캡처해서 보내기 쉽게)
+    const st = localAi[key] || {};
+    $(`${id}Detail`).textContent = st.installed ? `${st.version || ""}${st.detail ? ` · ${st.detail.replace(/\s+/g, " ").slice(0, 160)}` : ""}` : "";
   }
   $("autoOn").checked = autoOn();
   applyAutoLabels();
