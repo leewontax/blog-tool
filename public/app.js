@@ -492,6 +492,7 @@ function applyAutoLabels() {
     if (!b || b.dataset.busy) continue;
     if (!b.textContent.includes("(자동)")) manualLabels[id] = b.textContent; // 원래(복사 방식) 문구 기억
     b.textContent = engineReady(engine) ? label : manualLabels[id] ?? b.textContent;
+    b.classList.toggle("auto-btn", engineReady(engine)); // 자동 실행 버튼은 빨간색
   }
   if (mode === "copy") $("aiBadge").textContent = autoLabel();
   if (typeof updatePipeBox === "function") updatePipeBox();

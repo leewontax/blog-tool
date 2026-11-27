@@ -400,3 +400,8 @@ button.badge { border: 0; cursor: pointer; font-weight: 600; }
 
 .auto-detail { flex-basis: 100%; font-size: 11px; color: var(--muted); font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
 .auto-detail:empty { display: none; }
+
+/* 자동 실행 버튼: 빨간색 */
+button.auto-btn { background: #d63a2f; border-color: #d63a2f; color: #fff; }
+button.auto-btn:hover { filter: brightness(1.08); border-color: #d63a2f; }
+button.auto-btn:disabled { background: #e88a83; border-color: #e88a83; }
